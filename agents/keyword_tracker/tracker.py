@@ -52,7 +52,7 @@ class KeywordTracker:
         self.default_days = getattr(settings, 'KEYWORD_TREND_DEFAULT_DAYS', 30)
         self.chart_top_n = getattr(settings, 'KEYWORD_CHART_TOP_N', 15)
         self.trend_top_n = getattr(settings, 'KEYWORD_TREND_TOP_N', 5)
-        self.batch_size = getattr(settings, 'KEYWORD_NORMALIZATION_BATCH_SIZE', 50)
+        self.batch_size = getattr(settings, 'KEYWORD_NORMALIZATION_BATCH_SIZE', 25)
 
     def record_keywords(
         self,

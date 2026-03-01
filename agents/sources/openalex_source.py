@@ -355,21 +355,21 @@ class OpenAlexSource(BasePaperSource):
 
                 for item in results:
                     doi = item.get("doi")
-                if not doi:
-                    # 使用 OpenAlex ID 作为后备
-                    openalex_id = item.get("id", "").replace("https://openalex.org/", "")
-                    if not openalex_id:
+                    if not doi:
+                        # 使用 OpenAlex ID 作为后备
+                        openalex_id = item.get("id", "").replace("https://openalex.org/", "")
+                        if not openalex_id:
+                            continue
+                        doi = f"openalex:{openalex_id}"
+
+                    # 去重检查
+                    if self.is_processed(doi):
                         continue
-                    doi = f"openalex:{openalex_id}"
 
-                # 去重检查
-                if self.is_processed(doi):
-                    continue
-
-                # 提取标题
-                title = item.get("title", "Untitled")
-                if not title or title == "Untitled":
-                    continue
+                    # 提取标题
+                    title = item.get("title", "Untitled")
+                    if not title or title == "Untitled":
+                        continue
 
                     # 清理标题（移除可能的HTML标签）
                     title = re.sub(r'<[^>]+>', '', title)

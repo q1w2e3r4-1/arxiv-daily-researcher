@@ -275,7 +275,7 @@ arxiv-daily-researcher/
     "enabled": true,           // 启用关键词记录到数据库
     "normalization": {
       "enabled": true,         // 启用 AI 关键词标准化
-      "batch_size": 50
+      "batch_size": 25
     },
     "trend_view": {
       "default_days": 30       // 默认展示天数
@@ -366,7 +366,24 @@ CHEAP_LLM__MODEL_NAME=glm-4-flash
 
 ## 📝 更新日志
 
-### v1.2 (最新) - 2026-02-08
+### v1.3 (最新) - 2026-03-01
+
+**Bug 修复：**
+
+1. **修复 OpenAlex 数据源只处理每页最后一篇论文的严重 bug** - `for item in results:` 循环中，去重检查、标题提取、作者提取等全部处理逻辑的缩进错误导致它们位于循环体之外，最终每页只有最后一篇论文被实际处理
+   - 位置：[openalex_source.py:356-377](agents/sources/openalex_source.py#L356-L377)
+   - 影响：修复前抓取 PRL 等期刊时大量论文被静默跳过
+
+2. **修复关键词标准化 JSON 解析失败** - LLM 将 JSON 包裹在 markdown 代码块（`` ```json ... ``` ``）中返回时，`json.loads()` 直接报 `Expecting value: line 1 column 1 (char 0)` 错误
+   - `agents/keyword_tracker/normalizer.py`：新增 `_extract_json()` 函数，解析前自动剥离 markdown 代码块包裹
+   - `agents/keyword_agent.py`：将 `replace()` 方式改为 `split()` 方式，并补充对无 `json` 标注的单纯 ` ``` ` 代码块的处理
+
+3. **修复关键词标准化 JSON 截断问题** - batch_size=50 时 LLM 需输出大量 JSON，容易超出输出 token 上限导致 JSON 不完整、解析失败
+   - 将 `batch_size` 默认值从 50 改为 25，同步修改了 `search_config.json`、`config.py`、`agents/keyword_tracker/tracker.py`、`agents/keyword_tracker/normalizer.py` 四处
+
+---
+
+### v1.2 - 2026-02-08
 
 **重要修复：**
 

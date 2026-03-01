@@ -5,6 +5,7 @@ AI 关键词标准化模块
 """
 
 import json
+import re
 import logging
 from typing import List, Dict, Optional
 from pydantic import BaseModel
@@ -19,6 +20,16 @@ class NormalizationResult(BaseModel):
     original_keywords: List[str]
     category: Optional[str] = None
     confidence: float = 1.0
+
+
+def _extract_json(text: str) -> str:
+    """从 LLM 响应中提取 JSON 内容，去除 markdown 代码块包裹"""
+    text = text.strip()
+    # 匹配 ```json ... ``` 或 ``` ... ``` 包裹的内容
+    match = re.search(r'```(?:json)?\s*\n?(.*?)```', text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text
 
 
 class KeywordNormalizer:
@@ -44,7 +55,7 @@ class KeywordNormalizer:
         self,
         keywords: List[str],
         existing_canonical: Optional[List[str]] = None,
-        batch_size: int = 50
+        batch_size: int = 25
     ) -> List[NormalizationResult]:
         """
         批量标准化关键词
@@ -110,7 +121,8 @@ class KeywordNormalizer:
             logger.debug(f"LLM返回内容前100字符: {content[:100]}")
 
             try:
-                data = json.loads(content)
+                json_str = _extract_json(content)
+                data = json.loads(json_str)
             except json.JSONDecodeError as e:
                 # 🆕 优化：记录导致错误的原始内容
                 logger.error(f"JSON 解析失败: {e}")

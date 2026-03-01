@@ -254,7 +254,7 @@ class Settings(BaseSettings):
                 if "normalization" in kt:
                     norm = kt["normalization"]
                     self.KEYWORD_NORMALIZATION_ENABLED = norm.get("enabled", True)
-                    self.KEYWORD_NORMALIZATION_BATCH_SIZE = norm.get("batch_size", 50)
+                    self.KEYWORD_NORMALIZATION_BATCH_SIZE = norm.get("batch_size", 25)
 
                 if "trend_view" in kt:
                     self.KEYWORD_TREND_DEFAULT_DAYS = kt["trend_view"].get("default_days", 30)

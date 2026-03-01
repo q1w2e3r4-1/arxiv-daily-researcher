@@ -320,9 +320,11 @@ class KeywordAgent:
                 )
                 content = response.choices[0].message.content
 
-                # 处理可能的非标准JSON输出包装
+                # 处理可能的非标准JSON输出包装（去除 markdown 代码块）
                 if "```json" in content:
-                    content = content.replace("```json", "").replace("```", "").strip()
+                    content = content.split("```json")[1].split("```")[0].strip()
+                elif "```" in content:
+                    content = content.split("```")[1].split("```")[0].strip()
 
                 data = json.loads(content)
 

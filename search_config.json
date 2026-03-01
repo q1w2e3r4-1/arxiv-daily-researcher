@@ -97,7 +97,7 @@
     },
     "normalization": {
       "enabled": true, // 是否启用 AI 关键词标准化
-      "batch_size": 50 // 每批处理的关键词数量
+      "batch_size": 25 // 每批处理的关键词数量
     },
     "trend_view": {
       "default_days": 30 // 默认趋势展示天数
