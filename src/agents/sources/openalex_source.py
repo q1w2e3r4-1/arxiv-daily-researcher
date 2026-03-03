@@ -13,6 +13,7 @@ import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Optional
+from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
 from .base_source import BasePaperSource, PaperMetadata
 
@@ -167,6 +168,23 @@ class OpenAlexSource(BasePaperSource):
         if self.session:
             self.session.close()
             logger.debug("OpenAlex Session已关闭")
+
+    def _api_request(self, url: str, params: dict) -> dict:
+        """发送 OpenAlex API 请求，带自动重试。"""
+        from config import settings as _settings
+
+        @retry(
+            stop=stop_after_attempt(_settings.RETRY_MAX_ATTEMPTS),
+            wait=wait_exponential(min=_settings.RETRY_MIN_WAIT, max=_settings.RETRY_MAX_WAIT),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=True,
+        )
+        def _do_request():
+            resp = self.session.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            return resp.json()
+
+        return _do_request()
 
     @property
     def display_name(self) -> str:
@@ -344,9 +362,7 @@ class OpenAlexSource(BasePaperSource):
                 params.update(base_params)
 
                 logger.debug(f"  正在获取第 {page} 页...")
-                response = self.session.get(url, params=params, timeout=30)
-                response.raise_for_status()
-                data = response.json()
+                data = self._api_request(url, params)
 
                 results = data.get("results", [])
                 if not results:

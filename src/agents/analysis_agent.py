@@ -6,8 +6,10 @@ from typing import Optional, Dict, Any, List
 from pathlib import Path
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
+from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
 from config import settings
+from agents.mineru_parser import MineruParser
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +81,90 @@ class AnalysisAgent:
             base_url=settings.SMART_LLM.base_url
         )
 
+        # 初始化 MinerU PDF 解析器
+        self.mineru_parser = MineruParser()
+
         # 加载报告模板以获取prompt配置
         self.basic_template = settings.load_report_template("basic_report_template.json")
         self.deep_template = settings.load_report_template("deep_analysis_template.json")
+
+    # ======================================================================
+    # 带重试的 LLM / HTTP 调用封装
+    # ======================================================================
+
+    def _call_cheap_llm(self, prompt: str) -> str:
+        """调用低成本LLM（JSON模式），带自动重试。"""
+        @retry(
+            stop=stop_after_attempt(settings.RETRY_MAX_ATTEMPTS),
+            wait=wait_exponential(min=settings.RETRY_MIN_WAIT, max=settings.RETRY_MAX_WAIT),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=True,
+        )
+        def _do_call():
+            resp = self.cheap_client.chat.completions.create(
+                model=settings.CHEAP_LLM.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=settings.CHEAP_LLM.temperature,
+                response_format={"type": "json_object"},
+            )
+            return resp.choices[0].message.content
+
+        return _do_call()
+
+    def _call_cheap_llm_plain(self, prompt: str) -> str:
+        """调用低成本LLM（纯文本模式），带自动重试。"""
+        @retry(
+            stop=stop_after_attempt(settings.RETRY_MAX_ATTEMPTS),
+            wait=wait_exponential(min=settings.RETRY_MIN_WAIT, max=settings.RETRY_MAX_WAIT),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=True,
+        )
+        def _do_call():
+            resp = self.cheap_client.chat.completions.create(
+                model=settings.CHEAP_LLM.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+            )
+            return resp.choices[0].message.content.strip()
+
+        return _do_call()
+
+    def _call_smart_llm(self, prompt: str) -> str:
+        """调用高性能LLM（JSON模式），带自动重试。"""
+        @retry(
+            stop=stop_after_attempt(settings.RETRY_MAX_ATTEMPTS),
+            wait=wait_exponential(min=settings.RETRY_MIN_WAIT, max=settings.RETRY_MAX_WAIT),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=True,
+        )
+        def _do_call():
+            resp = self.smart_client.chat.completions.create(
+                model=settings.SMART_LLM.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=settings.SMART_LLM.temperature,
+                response_format={"type": "json_object"},
+            )
+            return resp.choices[0].message.content
+
+        return _do_call()
+
+    def _download_pdf_bytes(self, pdf_url: str) -> bytes:
+        """下载PDF内容，带自动重试。"""
+        @retry(
+            stop=stop_after_attempt(settings.RETRY_MAX_ATTEMPTS),
+            wait=wait_exponential(min=settings.RETRY_MIN_WAIT, max=settings.RETRY_MAX_WAIT),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=True,
+        )
+        def _do_download():
+            headers = {
+                "User-Agent": "ArxivDailyResearcher/2.0 (https://github.com/yzr278892/arxiv-daily-researcher; yzr278892@gmail.com)"
+            }
+            resp = requests.get(pdf_url, headers=headers, timeout=30)
+            resp.raise_for_status()
+            return resp.content
+
+        return _do_download()
 
     def _clean_json_string(self, json_str: str) -> str:
         """清理LLM响应中的Markdown代码块标记和非法转义字符。"""
@@ -220,13 +303,7 @@ class AnalysisAgent:
 """
 
         try:
-            response = self.cheap_client.chat.completions.create(
-                model=settings.CHEAP_LLM.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=settings.CHEAP_LLM.temperature,
-                response_format={"type": "json_object"}
-            )
-            content = response.choices[0].message.content
+            content = self._call_cheap_llm(prompt)
             content = self._clean_json_string(content)
 
             try:
@@ -317,12 +394,7 @@ class AnalysisAgent:
 请直接输出中文翻译，不要添加任何说明或标记。"""
 
         try:
-            response = self.cheap_client.chat.completions.create(
-                model=settings.CHEAP_LLM.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3
-            )
-            translation = response.choices[0].message.content.strip()
+            translation = self._call_cheap_llm_plain(prompt)
             logger.info("摘要翻译完成")
             return translation
 
@@ -431,13 +503,7 @@ class AnalysisAgent:
         prompt += f"\n\n{prompts_config.get('field_output_format', '使用JSON格式输出。')}"
 
         try:
-            response = self.smart_client.chat.completions.create(
-                model=settings.SMART_LLM.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=settings.SMART_LLM.temperature,
-                response_format={"type": "json_object"}
-            )
-            content = response.choices[0].message.content
+            content = self._call_smart_llm(prompt)
             content = self._clean_json_string(content)
 
             try:
@@ -460,6 +526,51 @@ class AnalysisAgent:
         """
         下载PDF并提取文本内容。
 
+        根据配置选择解析方式:
+        - mineru: 优先使用 MinerU 云端 API 解析，失败时自动降级到 PyMuPDF
+        - pymupdf: 直接使用 PyMuPDF 本地解析
+
+        参数:
+            pdf_url (str): PDF下载URL
+
+        返回:
+            Optional[str]: 提取的文本内容，失败时返回None
+        """
+        # 根据配置决定解析方式
+        if settings.PDF_PARSER_MODE == "mineru":
+            # 尝试 MinerU 云端解析
+            text = self._parse_pdf_with_mineru(pdf_url)
+            if text:
+                return text
+            # MinerU 失败，降级到 PyMuPDF
+            logger.info("降级使用 PyMuPDF 本地解析")
+
+        return self._parse_pdf_with_pymupdf(pdf_url)
+
+    def _parse_pdf_with_mineru(self, pdf_url: str) -> Optional[str]:
+        """
+        使用 MinerU API 解析 PDF。
+
+        参数:
+            pdf_url (str): PDF下载URL
+
+        返回:
+            Optional[str]: 提取的文本内容，失败时返回None
+        """
+        if not self.mineru_parser.is_available():
+            if not self.mineru_parser.is_configured():
+                logger.warning("MinerU API 未配置（MINERU_API_KEY 为空），使用 PyMuPDF 本地解析")
+            return None
+
+        text = self.mineru_parser.parse_pdf(pdf_url)
+        if text:
+            logger.info(f"MinerU 解析成功，获取 {len(text)} 字符")
+        return text
+
+    def _parse_pdf_with_pymupdf(self, pdf_url: str) -> Optional[str]:
+        """
+        使用 PyMuPDF 本地解析 PDF。
+
         参数:
             pdf_url (str): PDF下载URL
 
@@ -467,33 +578,30 @@ class AnalysisAgent:
             Optional[str]: 提取的文本内容，失败时返回None
         """
         try:
-            # 下载PDF
-            headers = {
-                "User-Agent": "ArxivDailyResearcher/2.0 (https://github.com/yzr278892/arxiv-daily-researcher; yzr278892@gmail.com)"
-            }
-            response = requests.get(pdf_url, headers=headers, timeout=30)
-            response.raise_for_status()
+            # 下载PDF（带自动重试）
+            pdf_bytes = self._download_pdf_bytes(pdf_url)
 
             # 保存到临时文件
             temp_pdf = settings.DOWNLOAD_DIR / f"temp_{hash(pdf_url)}.pdf"
             with open(temp_pdf, 'wb') as f:
-                f.write(response.content)
+                f.write(pdf_bytes)
 
-            # 解析PDF（前20页）
-            doc = fitz.open(temp_pdf)
-            text = ""
-            for i, page in enumerate(doc):
-                if i >= 20:  # 只读前20页
-                    break
-                text += page.get_text()
-            doc.close()
+            # 解析PDF（前20页），使用 try/finally 确保资源释放和临时文件清理
+            try:
+                with fitz.open(temp_pdf) as doc:
+                    text = ""
+                    for i, page in enumerate(doc):
+                        if i >= 20:  # 只读前20页
+                            break
+                        text += page.get_text()
+            finally:
+                # 无论解析成功与否均清理临时文件
+                if temp_pdf.exists():
+                    temp_pdf.unlink()
 
-            # 清理临时文件
-            temp_pdf.unlink()
-
-            logger.info(f"PDF解析成功，提取 {len(text)} 字符")
+            logger.info(f"PyMuPDF 解析成功，提取 {len(text)} 字符")
             return text
 
         except Exception as e:
-            logger.error(f"PDF下载/解析失败: {e}")
+            logger.error(f"PyMuPDF PDF下载/解析失败: {e}")
             return None

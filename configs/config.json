@@ -6,6 +6,7 @@
   "search_settings": {
     "search_days": 7, // 搜索最近N天的论文。推荐：1(每日) | 7(每周) | 30(每月)
     "max_results": 100, // 每个数据源最多抓取论文数。推荐：50-200
+    "max_results_per_source": {}, // 按数据源单独配置，如 {"arxiv": 150, "prl": 50}，未指定的源使用 max_results
   },
   // 数据源配置 - 控制从哪些来源获取论文
   "data_sources": {
@@ -93,7 +94,7 @@
   "keyword_tracker": {
     "enabled": true, // 是否启用关键词趋势追踪（记录到数据库）
     "database": {
-      "path": "data/keywords.db" // SQLite 数据库路径
+      "path": "data/keywords/keywords.db" // SQLite 数据库路径
     },
     "normalization": {
       "enabled": true, // 是否启用 AI 关键词标准化
@@ -120,5 +121,69 @@
       // always: 每次运行都生成
       "frequency": "weekly"
     }
+  },
+  // 通知配置 - 运行完成后发送结果通知
+  "notifications": {
+    "enabled": true, // 总开关（还需在 .env 中配置具体渠道的密钥/URL）
+    "on_success": true, // 成功时发送通知
+    "on_failure": true, // 失败时发送通知
+    "attach_reports": false, // 邮件是否附带报告文件
+    "top_n": 5, // 通知中包含的 Top-N 高分论文摘要数量
+    "channels": {
+      "email": {
+        "enabled": false
+      },
+      "wechat_work": {
+        "enabled": false
+      },
+      "dingtalk": {
+        "enabled": false
+      },
+      "telegram": {
+        "enabled": false
+      },
+      "slack": {
+        "enabled": false
+      },
+      "generic_webhook": {
+        "enabled": false
+      }
+    }
+  },
+  // 重试配置 - LLM 和网络请求的自动重试
+  "retry": {
+    "max_attempts": 3, // 最大重试次数
+    "min_wait": 2, // 最小等待时间（秒），指数退避起始值
+    "max_wait": 30 // 最大等待时间（秒）
+  },
+  // 日志配置 - 日志轮转和保留策略
+  "logging": {
+    "rotation_type": "time", // "time" (按天轮转) 或 "size" (按大小轮转)
+    "keep_days": 30 // 日志保留天数
+  },
+  // 并发配置 - LLM 评分和深度分析的并发设置
+  "concurrency": {
+    "enabled": false, // 是否启用并发（注意API速率限制）
+    "workers": 3 // 并发线程数（建议不超过5）
+  },
+  // PDF 解析配置 - 控制如何解析论文 PDF
+  "pdf_parser": {
+    // 解析模式: "mineru" (云端API, 质量更高) 或 "pymupdf" (本地解析, 无需网络)
+    // 当 mineru 不可用时（Token过期/额度耗尽/网络异常），自动降级为 pymupdf
+    "mode": "mineru",
+    // MinerU 模型版本: "pipeline" (快速) 或 "vlm" (更精确，消耗更多额度)
+    "mineru_model_version": "pipeline",
+    // 任务状态轮询间隔（秒）
+    "poll_interval": 3,
+    // 任务超时时间（秒），超过此时间视为失败
+    "poll_timeout": 300
+  },
+  // 报告设置
+  "report_settings": {
+    "enable_html_report": true // 是否同时生成 HTML 格式报告
+  },
+  // 自动更新配置 - 每次运行前检查 GitHub 仓库是否有新版本
+  "auto_update": {
+    "enabled": true // 是否启用自动更新检查（默认开启）
   }
 }

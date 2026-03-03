@@ -34,6 +34,7 @@ class SearchAgent:
         arxiv_domains: List[str] = None,
         journals: List[str] = None,
         max_results: int = 100,
+        max_results_per_source: Dict[str, int] = None,
         openalex_email: str = None,
         openalex_api_key: str = None,
         enable_semantic_scholar: bool = True,
@@ -47,7 +48,8 @@ class SearchAgent:
             enabled_sources: 启用的数据源列表，如 ["arxiv", "prl", "pra"]
             arxiv_domains: ArXiv 领域列表，如 ["quant-ph", "cs.AI"]
             journals: 期刊代码列表，如 ["prl", "pra"]
-            max_results: 每个数据源最多抓取的论文数
+            max_results: 每个数据源最多抓取的论文数（全局默认值）
+            max_results_per_source: 按数据源单独配置的最大结果数，如 {"arxiv": 150, "prl": 50}
             openalex_email: OpenAlex 礼貌池邮箱
             openalex_api_key: OpenAlex API Key
             enable_semantic_scholar: 是否启用 Semantic Scholar TLDR
@@ -60,6 +62,7 @@ class SearchAgent:
         self.arxiv_domains = arxiv_domains or []
         self.journals = journals or []
         self.max_results = max_results
+        self.max_results_per_source = max_results_per_source or {}
         self.openalex_email = openalex_email
         self.openalex_api_key = openalex_api_key
 
@@ -79,13 +82,17 @@ class SearchAgent:
         self.sources: Dict[str, BasePaperSource] = {}
         self._init_sources()
 
+    def _get_max_results(self, source: str) -> int:
+        """获取指定数据源的最大结果数，优先使用单独配置，否则回退到全局默认值。"""
+        return self.max_results_per_source.get(source, self.max_results)
+
     def _init_sources(self):
         """根据配置初始化数据源"""
         # 检查是否启用 ArXiv
         if "arxiv" in self.enabled_sources:
             self.sources["arxiv"] = ArxivSource(
                 history_dir=self.history_dir,
-                max_results=self.max_results
+                max_results=self._get_max_results("arxiv")
             )
             logger.info("[SearchAgent] 已启用 ArXiv 数据源")
 
@@ -102,10 +109,15 @@ class SearchAgent:
                 journal_codes.append(journal)
 
         if journal_codes:
+            # 使用期刊中最大的单独配置值，如果都没有则用全局默认
+            openalex_max = max(
+                (self._get_max_results(jc) for jc in journal_codes),
+                default=self.max_results,
+            )
             self.sources["openalex"] = OpenAlexSource(
                 history_dir=self.history_dir,
                 journals=journal_codes,
-                max_results=self.max_results,
+                max_results=openalex_max,
                 email=self.openalex_email,
                 api_key=self.openalex_api_key
             )

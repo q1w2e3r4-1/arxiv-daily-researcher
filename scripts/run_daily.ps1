@@ -6,16 +6,17 @@
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-# 获取脚本所在目录
+# 获取脚本所在目录，项目根目录为上一级
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location $SCRIPT_DIR
+$PROJECT_DIR = Split-Path -Parent $SCRIPT_DIR
+Set-Location $PROJECT_DIR
 
 # 日志文件路径
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$LOG_FILE = Join-Path $SCRIPT_DIR "logs\cron_$timestamp.log"
+$LOG_FILE = Join-Path $PROJECT_DIR "logs\cron_$timestamp.log"
 
 # 确保日志目录存在
-$logsDir = Join-Path $SCRIPT_DIR "logs"
+$logsDir = Join-Path $PROJECT_DIR "logs"
 if (-not (Test-Path $logsDir)) {
     New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
 }
@@ -36,8 +37,8 @@ function Setup-Venv {
     $venvDir = $null
 
     # 检查是否存在虚拟环境
-    $venvPath = Join-Path $SCRIPT_DIR "venv"
-    $dotVenvPath = Join-Path $SCRIPT_DIR ".venv"
+    $venvPath = Join-Path $PROJECT_DIR "venv"
+    $dotVenvPath = Join-Path $PROJECT_DIR ".venv"
 
     if (Test-Path $venvPath) {
         $venvDir = $venvPath
@@ -88,7 +89,7 @@ function Setup-Venv {
     if ($LASTEXITCODE -ne 0) {
         Write-Log "依赖未完整安装，正在安装..."
 
-        $requirementsFile = Join-Path $SCRIPT_DIR "requirements.txt"
+        $requirementsFile = Join-Path $PROJECT_DIR "requirements.txt"
         if (Test-Path $requirementsFile) {
             $pipResult = & pip install -r $requirementsFile 2>&1
             Write-Log ($pipResult | Out-String)
@@ -110,7 +111,7 @@ Setup-Venv
 
 # 运行主程序
 Write-Log "运行 main.py..."
-$mainScript = Join-Path $SCRIPT_DIR "main.py"
+$mainScript = Join-Path $PROJECT_DIR "main.py"
 $output = & python $mainScript 2>&1
 Write-Log ($output | Out-String)
 

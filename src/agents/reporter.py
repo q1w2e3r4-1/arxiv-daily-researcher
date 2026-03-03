@@ -11,10 +11,11 @@
 - 支持自定义提示词
 """
 
+import html
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from config import settings
 from .report_modules.base_module import FormatHelper
@@ -99,18 +100,17 @@ class Reporter:
             if not papers:
                 continue
 
-            # 创建数据源子目录
+            # Markdown 报告目录: reports/markdown/[source]/
             if settings.REPORTS_BY_SOURCE:
-                source_dir = self.report_base_dir / source
+                md_dir = self.report_base_dir / "markdown" / source
             else:
-                source_dir = self.report_base_dir
-
-            source_dir.mkdir(parents=True, exist_ok=True)
+                md_dir = self.report_base_dir / "markdown"
+            md_dir.mkdir(parents=True, exist_ok=True)
 
             # 生成报告文件名
             display_name = self.get_source_display_name(source)
             filename = f"{source.upper()}_Report_{timestamp}.md"
-            filepath = source_dir / filename
+            filepath = md_dir / filename
 
             # 获取该数据源的深度分析（如果有）
             analyses = analyses_by_source.get(source, [])
@@ -130,6 +130,28 @@ class Reporter:
 
             report_paths[source] = filepath
             logger.info(f"[{source}] 报告已生成: {filepath}")
+
+            # 生成 HTML 报告（如果启用）
+            if settings.ENABLE_HTML_REPORT:
+                # HTML 报告目录: reports/html/[source]/
+                if settings.REPORTS_BY_SOURCE:
+                    html_dir = self.report_base_dir / "html" / source
+                else:
+                    html_dir = self.report_base_dir / "html"
+                html_dir.mkdir(parents=True, exist_ok=True)
+
+                html_filepath = html_dir / f"{source.upper()}_Report_{timestamp}.html"
+                html_path = self._generate_html_report(
+                    filepath=html_filepath,
+                    source=source,
+                    display_name=display_name,
+                    papers=papers,
+                    keywords_dict=keywords_dict,
+                    analyses=analyses,
+                    has_deep_analysis=has_deep_analysis
+                )
+                if html_path:
+                    report_paths[f"{source}_html"] = html_path
 
         return report_paths
 
@@ -364,6 +386,197 @@ class Reporter:
         lines.append("")
 
         return lines
+
+    # ==================== HTML 报告生成 ====================
+
+    def _get_report_css(self) -> str:
+        """从 CSS 模板文件加载 HTML 报告样式，文件不存在时回退到内置样式"""
+        return settings.load_report_css("html_report.css")
+
+    @staticmethod
+    def _h(text) -> str:
+        """HTML 转义"""
+        if text is None:
+            return ""
+        return html.escape(str(text))
+
+    def _generate_html_report(
+        self,
+        filepath: Path,
+        source: str,
+        display_name: str,
+        papers: List[Dict[str, Any]],
+        keywords_dict: Dict[str, float],
+        analyses: List[Dict[str, Any]],
+        has_deep_analysis: bool
+    ) -> Optional[Path]:
+        """生成 HTML 格式报告"""
+        html_path = filepath
+        h = self._h
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        total_papers = len(papers)
+        qualified_count = sum(1 for p in papers if p['score_response'].is_qualified)
+        analyzed_count = len(analyses)
+
+        total_weight = sum(keywords_dict.values())
+        passing_score = settings.calculate_passing_score(total_weight)
+
+        sorted_papers = sorted(
+            papers,
+            key=lambda x: x['score_response'].total_score,
+            reverse=True
+        )
+
+        # 构建分析索引 {paper_id: analysis}
+        analysis_map = {}
+        for a in analyses:
+            analysis_map[a['paper_id']] = a['analysis']
+
+        parts = []
+        parts.append("<!DOCTYPE html>")
+        parts.append('<html lang="zh-CN"><head>')
+        parts.append('<meta charset="UTF-8">')
+        parts.append('<meta name="viewport" content="width=device-width,initial-scale=1">')
+        parts.append(f'<title>{h(display_name)} Report {today}</title>')
+        parts.append(f'<style>{self._get_report_css()}</style>')
+        parts.append('</head><body>')
+
+        # 标题
+        parts.append(f'<h1>{h(display_name)} Research Report</h1>')
+        parts.append(f'<p class="meta">Generated: {h(timestamp)} | Passing score: {passing_score:.1f}</p>')
+
+        # 统计栏
+        parts.append('<div class="stats-bar">')
+        parts.append(f'<div class="stat"><div class="num">{total_papers}</div><div class="label">Total</div></div>')
+        parts.append(f'<div class="stat"><div class="num">{qualified_count}</div><div class="label">Qualified</div></div>')
+        if has_deep_analysis:
+            parts.append(f'<div class="stat"><div class="num">{analyzed_count}</div><div class="label">Analyzed</div></div>')
+        pct = (qualified_count / total_papers * 100) if total_papers else 0
+        parts.append(f'<div class="stat"><div class="num">{pct:.0f}%</div><div class="label">Pass Rate</div></div>')
+        parts.append('</div>')
+
+        # 论文卡片
+        parts.append('<h2>Papers</h2>')
+        for idx, paper in enumerate(sorted_papers, 1):
+            sr = paper['score_response']
+            is_qual = sr.is_qualified
+            cls = "pass" if is_qual else "fail"
+            badge_text = "PASS" if is_qual else "FAIL"
+            url = paper.get('url', '')
+            title = paper.get('title', 'Unknown')
+            paper_meta = paper.get('paper_metadata')
+
+            parts.append(f'<div class="card {cls}">')
+
+            # 标题行
+            if url:
+                parts.append(f'<div class="card-title"><a href="{h(url)}" target="_blank">{idx}. {h(title)}</a>')
+            else:
+                parts.append(f'<div class="card-title">{idx}. {h(title)}')
+            parts.append(f'<span class="badge {cls}">{badge_text}</span></div>')
+
+            # 分数和元数据
+            parts.append(f'<div class="field"><span class="field-label">Score:</span> '
+                         f'<span class="score">{sr.total_score:.1f}</span> / {passing_score:.1f}</div>')
+            authors = paper_meta.get_authors_string() if paper_meta else paper.get('authors', '')
+            parts.append(f'<div class="field"><span class="field-label">Authors:</span> {h(authors)}</div>')
+            if paper_meta and paper_meta.published_date:
+                published = paper_meta.published_date.strftime('%Y-%m-%d')
+            else:
+                published = paper.get('published', '')
+            parts.append(f'<div class="field"><span class="field-label">Published:</span> {h(published)}</div>')
+
+            # TLDR
+            if sr.tldr and sr.tldr != "评分失败，无法生成摘要":
+                parts.append(f'<div class="tldr"><strong>TL;DR:</strong> {h(sr.tldr)}</div>')
+
+            # 中文摘要（可折叠）
+            abstract_cn = paper.get('abstract_cn', '')
+            if abstract_cn:
+                parts.append('<details open><summary>摘要翻译</summary>')
+                parts.append(f'<div class="analysis-content"><p>{h(abstract_cn)}</p></div></details>')
+
+            # 摘要原文（可折叠）
+            abstract = paper_meta.abstract if paper_meta else paper.get('abstract', '')
+            if abstract:
+                parts.append('<details><summary>Abstract</summary>')
+                parts.append(f'<div class="analysis-content"><p>{h(abstract)}</p></div></details>')
+
+            # 评分详情（可折叠）
+            if sr.keyword_scores:
+                parts.append('<details><summary>评分详情</summary>')
+                parts.append('<div class="analysis-content">')
+                parts.append('<table style="width:100%;border-collapse:collapse;font-size:0.85em;">')
+                parts.append('<tr style="border-bottom:2px solid var(--color-border);">'
+                             '<th style="text-align:left;padding:4px 8px;">关键词</th>'
+                             '<th style="text-align:center;padding:4px 8px;">权重</th>'
+                             '<th style="text-align:center;padding:4px 8px;">相关度</th>'
+                             '<th style="text-align:center;padding:4px 8px;">得分</th></tr>')
+                for kw, score in sr.keyword_scores.items():
+                    weight = keywords_dict.get(kw, 0)
+                    weighted = score * weight
+                    parts.append(f'<tr style="border-bottom:1px solid var(--color-border);">'
+                                 f'<td style="padding:4px 8px;">{h(kw)}</td>'
+                                 f'<td style="text-align:center;padding:4px 8px;">{weight:.1f}</td>'
+                                 f'<td style="text-align:center;padding:4px 8px;">{score:.1f}/10</td>'
+                                 f'<td style="text-align:center;padding:4px 8px;">{weighted:.1f}</td></tr>')
+                if sr.author_bonus > 0:
+                    experts = ", ".join(sr.expert_authors_found)
+                    parts.append(f'<tr style="border-bottom:1px solid var(--color-border);">'
+                                 f'<td style="padding:4px 8px;">作者加分</td>'
+                                 f'<td style="text-align:center;padding:4px 8px;">-</td>'
+                                 f'<td style="text-align:center;padding:4px 8px;">+{sr.author_bonus:.1f}</td>'
+                                 f'<td style="text-align:center;padding:4px 8px;">专家: {h(experts)}</td></tr>')
+                parts.append('</table>')
+                if sr.reasoning:
+                    parts.append(f'<p style="margin-top:8px;"><strong>评分理由:</strong> {h(sr.reasoning)}</p>')
+                parts.append('</div></details>')
+
+            # 提取的关键词
+            extracted_kw = sr.extracted_keywords if hasattr(sr, 'extracted_keywords') and sr.extracted_keywords else []
+            if extracted_kw:
+                parts.append('<details><summary>关键词</summary>')
+                parts.append(f'<div class="analysis-content"><p>{h(", ".join(extracted_kw))}</p></div></details>')
+
+            # 深度分析（可折叠）
+            paper_id = paper_meta.paper_id if paper_meta else paper.get('paper_id')
+            analysis = analysis_map.get(paper_id)
+            if analysis and isinstance(analysis, dict):
+                parts.append('<details><summary>深度分析</summary>')
+                parts.append('<div class="analysis-content">')
+                for key, value in analysis.items():
+                    if value is None:
+                        continue
+                    label = key.replace('_', ' ').title()
+                    if isinstance(value, list):
+                        parts.append(f'<p><strong>{h(label)}:</strong></p><ul>')
+                        for item in value:
+                            parts.append(f'<li>{h(str(item))}</li>')
+                        parts.append('</ul>')
+                    elif isinstance(value, dict):
+                        parts.append(f'<p><strong>{h(label)}:</strong></p><ul>')
+                        for k, v in value.items():
+                            parts.append(f'<li><strong>{h(k)}:</strong> {h(str(v))}</li>')
+                        parts.append('</ul>')
+                    else:
+                        parts.append(f'<p><strong>{h(label)}:</strong> {h(str(value))}</p>')
+                parts.append('</div></details>')
+
+            parts.append('</div>')  # card
+
+        parts.append('</body></html>')
+
+        try:
+            with open(html_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(parts))
+            logger.info(f"[{source}] HTML 报告已生成: {html_path}")
+            return html_path
+        except Exception as e:
+            logger.error(f"HTML 报告生成失败: {e}")
+            return None
 
     # ==================== 向后兼容接口 ====================
 

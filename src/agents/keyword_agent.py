@@ -31,7 +31,7 @@ class KeywordAgent:
         )
 
         # 缓存文件路径
-        self.cache_file = settings.DATA_DIR / "keywords_cache.json"
+        self.cache_file = settings.DATA_DIR / "keywords" / "keywords_cache.json"
 
     def _calculate_pdf_hash(self, pdf_path: Path) -> str:
         """

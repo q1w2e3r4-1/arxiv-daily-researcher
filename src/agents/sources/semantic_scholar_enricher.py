@@ -7,6 +7,7 @@ Semantic Scholar 数据增强器
 import logging
 import requests
 from typing import Optional, Dict
+from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,26 @@ class SemanticScholarEnricher:
             self.session.close()
             logger.debug("SemanticScholar Session已关闭")
 
+    def _api_get(self, url: str, params: dict, timeout: int = 10) -> requests.Response:
+        """发送 Semantic Scholar API GET 请求，带自动重试（跳过 404/429）。"""
+        from config import settings as _settings
+
+        @retry(
+            stop=stop_after_attempt(_settings.RETRY_MAX_ATTEMPTS),
+            wait=wait_exponential(min=_settings.RETRY_MIN_WAIT, max=_settings.RETRY_MAX_WAIT),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=True,
+        )
+        def _do_get():
+            resp = self.session.get(url, params=params, timeout=timeout)
+            # 404 和 429 不重试，直接返回
+            if resp.status_code in (404, 429):
+                return resp
+            resp.raise_for_status()
+            return resp
+
+        return _do_get()
+
     def get_tldr(self, doi: str) -> Optional[str]:
         """
         获取论文的 AI 生成 TLDR。
@@ -74,7 +95,7 @@ class SemanticScholarEnricher:
                 "fields": "tldr"
             }
 
-            response = self.session.get(url, params=params, timeout=10)
+            response = self._api_get(url, params)
 
             # 如果找不到论文，静默返回 None
             if response.status_code == 404:
@@ -130,7 +151,7 @@ class SemanticScholarEnricher:
                 "fields": "tldr,citationCount,influentialCitationCount,publicationTypes,externalIds"
             }
 
-            response = self.session.get(url, params=params, timeout=10)
+            response = self._api_get(url, params)
 
             if response.status_code == 404:
                 return None
@@ -187,7 +208,7 @@ class SemanticScholarEnricher:
                 "fields": "externalIds"
             }
 
-            response = self.session.get(url, params=params, timeout=10)
+            response = self._api_get(url, params)
 
             if response.status_code == 404:
                 return None

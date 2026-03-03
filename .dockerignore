@@ -1,0 +1,41 @@
+# Virtual environments
+venv/
+.venv/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Data (mounted as volumes, not baked into image)
+data/
+logs/
+
+# Environment files with secrets
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Scripts (not needed in container)
+scripts/
+
+# Docker compose (not needed inside image)
+docker/docker-compose.yml
+.dockerignore
+
+# GitHub
+.github/
+
+# Documentation
+LICENSE
+README.md

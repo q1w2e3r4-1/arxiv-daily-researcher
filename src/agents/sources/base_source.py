@@ -6,6 +6,7 @@
 
 import json
 import logging
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -103,6 +104,7 @@ class BasePaperSource(ABC):
         self.history_dir = history_dir
         self.history_file = history_dir / f"{source_name}_history.json"
         self.history: Dict[str, str] = {}
+        self._history_lock = threading.Lock()
         self._load_history()
 
     @abstractmethod
@@ -140,9 +142,10 @@ class BasePaperSource(ABC):
         return paper_id in self.history
 
     def mark_as_processed(self, paper_id: str):
-        """标记论文为已处理"""
-        self.history[paper_id] = datetime.now().isoformat()
-        self._save_history()
+        """标记论文为已处理（线程安全）"""
+        with self._history_lock:
+            self.history[paper_id] = datetime.now().isoformat()
+            self._save_history()
 
     def _load_history(self):
         """从文件加载历史记录"""

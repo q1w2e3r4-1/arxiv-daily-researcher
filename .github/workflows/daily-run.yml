@@ -1,0 +1,100 @@
+name: ArXiv Daily Research
+
+on:
+  # 定时触发 (UTC 时间)
+  schedule:
+    # 每天 UTC 00:00 运行 (= 北京时间 08:00)
+    - cron: '0 0 * * *'
+
+  # 支持手动触发
+  workflow_dispatch:
+    inputs:
+      search_days:
+        description: 'Search recent N days'
+        required: false
+        default: '7'
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create .env from secrets
+        run: |
+          cat > .env << 'ENVEOF'
+          CHEAP_LLM__API_KEY=${{ secrets.CHEAP_LLM_API_KEY }}
+          CHEAP_LLM__BASE_URL=${{ secrets.CHEAP_LLM_BASE_URL }}
+          CHEAP_LLM__MODEL_NAME=${{ secrets.CHEAP_LLM_MODEL_NAME }}
+          CHEAP_LLM__TEMPERATURE=${{ secrets.CHEAP_LLM_TEMPERATURE }}
+          SMART_LLM__API_KEY=${{ secrets.SMART_LLM_API_KEY }}
+          SMART_LLM__BASE_URL=${{ secrets.SMART_LLM_BASE_URL }}
+          SMART_LLM__MODEL_NAME=${{ secrets.SMART_LLM_MODEL_NAME }}
+          SMART_LLM__TEMPERATURE=${{ secrets.SMART_LLM_TEMPERATURE }}
+          OPENALEX_EMAIL=${{ secrets.OPENALEX_EMAIL }}
+          OPENALEX_API_KEY=${{ secrets.OPENALEX_API_KEY }}
+          SEMANTIC_SCHOLAR_API_KEY=${{ secrets.SEMANTIC_SCHOLAR_API_KEY }}
+          ENABLE_NOTIFICATIONS=${{ secrets.ENABLE_NOTIFICATIONS }}
+          SMTP_HOST=${{ secrets.SMTP_HOST }}
+          SMTP_PORT=${{ secrets.SMTP_PORT }}
+          SMTP_USER=${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM=${{ secrets.SMTP_FROM }}
+          SMTP_TO=${{ secrets.SMTP_TO }}
+          WECHAT_WEBHOOK_URL=${{ secrets.WECHAT_WEBHOOK_URL }}
+          DINGTALK_WEBHOOK_URL=${{ secrets.DINGTALK_WEBHOOK_URL }}
+          DINGTALK_SECRET=${{ secrets.DINGTALK_SECRET }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+          SLACK_WEBHOOK_URL=${{ secrets.SLACK_WEBHOOK_URL }}
+          GENERIC_WEBHOOK_URL=${{ secrets.GENERIC_WEBHOOK_URL }}
+          ENVEOF
+
+      - name: Restore previous data
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/history/
+            data/keywords.db
+          key: research-data-${{ github.run_number }}
+          restore-keys: |
+            research-data-
+
+      - name: Create data directories
+        run: mkdir -p data/reports data/history data/reference_pdfs data/downloaded_pdfs logs
+
+      - name: Run research pipeline
+        run: python main.py
+        env:
+          PYTHONUNBUFFERED: "1"
+
+      - name: Upload reports as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-reports-${{ github.run_number }}
+          path: |
+            data/reports/
+            logs/
+          retention-days: 30
+
+      - name: Save data for next run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/history/
+            data/keywords.db
+          key: research-data-${{ github.run_number }}

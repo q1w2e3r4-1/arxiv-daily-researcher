@@ -6,17 +6,113 @@
 - 学术期刊：PRL、PRA等（仅评分和摘要翻译）
 """
 
+import sys
+import hashlib
+import threading
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from typing import Dict, List, Any
+
+# 将 src 目录加入 Python 模块搜索路径
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
+from tqdm import tqdm
+
 from config import settings
 from utils.logger import setup_logger
-from agents import KeywordAgent, AnalysisAgent, Reporter
+from agents import KeywordAgent, AnalysisAgent, Reporter, RunResult
 from agents.search_agent import SearchAgent
 from agents.sources.base_source import PaperMetadata
-from tqdm import tqdm
-from typing import Dict, List, Any
-import hashlib
 
 # 初始化系统日志记录器
 logger = setup_logger("Main")
+
+
+def _score_single_paper(paper, source, analysis_agent, all_keywords,
+                        translation_cache, cache_lock, keyword_tracker, search_agent):
+    """
+    对单篇论文进行评分和翻译（供并发调用）。
+
+    线程安全：translation_cache 通过 cache_lock 保护，
+    mark_as_processed 由 base_source 内部锁保护。
+    """
+    score_response = analysis_agent.score_paper_with_keywords(
+        title=paper.title,
+        authors=paper.get_authors_string(),
+        abstract=paper.abstract,
+        keywords_dict=all_keywords
+    )
+
+    abstract_cn = ""
+    if paper.abstract and paper.abstract.strip():
+        abstract_hash = hashlib.md5(paper.abstract.encode('utf-8')).hexdigest()
+
+        with cache_lock:
+            cached = translation_cache.get(abstract_hash)
+
+        if cached is not None:
+            abstract_cn = cached
+            logger.debug(f"使用缓存的翻译: {paper.title[:30]}...")
+        else:
+            abstract_cn = analysis_agent.translate_abstract(paper.abstract)
+            with cache_lock:
+                translation_cache[abstract_hash] = abstract_cn
+            logger.debug(f"翻译并缓存: {paper.title[:30]}...")
+
+    scored = {
+        'paper_metadata': paper,
+        'paper_id': paper.paper_id,
+        'title': paper.title,
+        'authors': paper.get_authors_string(),
+        'abstract': paper.abstract,
+        'abstract_cn': abstract_cn,
+        'url': paper.url,
+        'pdf_url': paper.pdf_url,
+        'published': paper.published_date.strftime('%Y-%m-%d') if paper.published_date else 'N/A',
+        'score_response': score_response
+    }
+
+    if keyword_tracker and score_response.extracted_keywords:
+        try:
+            keyword_tracker.record_keywords(
+                keywords=score_response.extracted_keywords,
+                paper_id=paper.paper_id,
+                source=source
+            )
+        except Exception as e:
+            logger.warning(f"关键词记录失败 ({paper.paper_id[:30]}...): {e}")
+
+    search_agent.mark_as_processed(paper.paper_id, source)
+
+    return scored
+
+
+def _deep_analyze_single_paper(paper_info, analysis_agent):
+    """
+    对单篇论文进行深度分析（供并发调用）。
+
+    返回:
+        dict 或 None: {'paper_id': ..., 'analysis': ...} 或 None（失败时）
+    """
+    paper_meta = paper_info.get('paper_metadata')
+    pdf_url = paper_meta.get_best_pdf_url() if paper_meta else paper_info.get('pdf_url')
+
+    analysis = analysis_agent.deep_analyze(
+        title=paper_info['title'],
+        pdf_url=pdf_url,
+        abstract=paper_info['abstract'],
+        fallback_to_abstract=True
+    )
+
+    if analysis:
+        return {
+            'paper_id': paper_info['paper_id'],
+            'analysis': analysis,
+            'paper_meta': paper_meta,
+            'title': paper_info['title']
+        }
+    return None
 
 
 def main():
@@ -62,8 +158,19 @@ def main():
         all_keywords = keyword_agent.get_all_keywords()
 
         if not all_keywords:
-            logger.error("错误: 未找到任何关键词。请在 search_config.json 中配置主要关键词。")
-            return
+            logger.error("错误: 未找到任何关键词。请在 configs/config.json 中配置主要关键词。")
+            fail_result = RunResult(
+                run_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                success=False,
+                error_message="未找到任何关键词，请在 configs/config.json 中配置主要关键词"
+            )
+            if settings.ENABLE_NOTIFICATIONS:
+                try:
+                    from agents.notifier import NotifierAgent
+                    NotifierAgent().notify(fail_result)
+                except Exception:
+                    pass
+            return fail_result
 
         logger.info("关键词准备完成:")
         logger.info(f"  - 主要关键词: {len(settings.PRIMARY_KEYWORDS)} 个（权重 {settings.PRIMARY_KEYWORD_WEIGHT}）")
@@ -88,6 +195,7 @@ def main():
             arxiv_domains=settings.TARGET_DOMAINS,
             journals=settings.TARGET_JOURNALS,
             max_results=settings.MAX_RESULTS,
+            max_results_per_source=settings.MAX_RESULTS_PER_SOURCE,
             openalex_email=settings.OPENALEX_EMAIL,
             openalex_api_key=settings.OPENALEX_API_KEY,
             enable_semantic_scholar=settings.ENABLE_SEMANTIC_SCHOLAR_TLDR,
@@ -105,7 +213,17 @@ def main():
         if total_papers_count == 0:
             logger.info("未找到新论文。")
             print("\n未找到新论文，程序退出。")
-            return
+            no_papers_result = RunResult(
+                run_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                success=True
+            )
+            if settings.ENABLE_NOTIFICATIONS:
+                try:
+                    from agents.notifier import NotifierAgent
+                    NotifierAgent().notify(no_papers_result)
+                except Exception:
+                    pass
+            return no_papers_result
 
         logger.info(f"成功抓取 {total_papers_count} 篇新论文（来自 {len(papers_by_source)} 个数据源）")
 
@@ -127,6 +245,7 @@ def main():
 
         # 🆕 优化2: 翻译缓存 - 避免重复翻译相同的摘要（arxiv和期刊重复时）
         translation_cache = {}  # {abstract_hash: translation}
+        cache_lock = threading.Lock()
         logger.debug("翻译缓存已启用")
 
         for source, papers in papers_by_source.items():
@@ -136,65 +255,40 @@ def main():
             logger.info(f"  评分数据源 [{source}]: {len(papers)} 篇论文")
             scored_papers = []
 
-            # 使用tqdm显示进度条
-            with tqdm(total=len(papers), desc=f"📊 [{source}] 评分", unit="篇", ncols=100) as pbar:
-                for idx, paper in enumerate(papers, 1):
-                    # 更新进度条描述
-                    pbar.set_description(f"📊 [{source}] [{idx}/{len(papers)}]")
-                    pbar.set_postfix_str(f"{paper.title[:35]}...")
+            if settings.ENABLE_CONCURRENCY and len(papers) > 1:
+                # ========== 并发评分模式 ==========
+                logger.info(f"    使用并发模式 (workers={settings.CONCURRENCY_WORKERS})")
+                with tqdm(total=len(papers), desc=f"📊 [{source}] 评分", unit="篇", ncols=100) as pbar:
+                    with ThreadPoolExecutor(max_workers=settings.CONCURRENCY_WORKERS) as executor:
+                        futures = {
+                            executor.submit(
+                                _score_single_paper, paper, source, analysis_agent,
+                                all_keywords, translation_cache, cache_lock,
+                                keyword_tracker, search_agent
+                            ): paper
+                            for paper in papers
+                        }
+                        for future in as_completed(futures):
+                            try:
+                                result = future.result()
+                                scored_papers.append(result)
+                            except Exception as e:
+                                paper = futures[future]
+                                logger.error(f"论文评分异常 ({paper.title[:30]}...): {e}")
+                            pbar.update(1)
+            else:
+                # ========== 顺序评分模式 ==========
+                with tqdm(total=len(papers), desc=f"📊 [{source}] 评分", unit="篇", ncols=100) as pbar:
+                    for idx, paper in enumerate(papers, 1):
+                        pbar.set_description(f"📊 [{source}] [{idx}/{len(papers)}]")
+                        pbar.set_postfix_str(f"{paper.title[:35]}...")
 
-                    # 使用加权评分系统
-                    score_response = analysis_agent.score_paper_with_keywords(
-                        title=paper.title,
-                        authors=paper.get_authors_string(),
-                        abstract=paper.abstract,
-                        keywords_dict=all_keywords
-                    )
-
-                    # 🆕 优化2应用: 翻译摘要（使用缓存避免重复翻译）
-                    abstract_cn = ""
-                    if paper.abstract and paper.abstract.strip():
-                        abstract_hash = hashlib.md5(paper.abstract.encode('utf-8')).hexdigest()
-
-                        if abstract_hash in translation_cache:
-                            abstract_cn = translation_cache[abstract_hash]
-                            logger.debug(f"使用缓存的翻译: {paper.title[:30]}...")
-                        else:
-                            abstract_cn = analysis_agent.translate_abstract(paper.abstract)
-                            translation_cache[abstract_hash] = abstract_cn
-                            logger.debug(f"翻译并缓存: {paper.title[:30]}...")
-
-                    # 保存论文信息和评分
-                    scored_papers.append({
-                        'paper_metadata': paper,
-                        'paper_id': paper.paper_id,
-                        'title': paper.title,
-                        'authors': paper.get_authors_string(),
-                        'abstract': paper.abstract,
-                        'abstract_cn': abstract_cn,
-                        'url': paper.url,
-                        'pdf_url': paper.pdf_url,
-                        'published': paper.published_date.strftime('%Y-%m-%d') if paper.published_date else 'N/A',
-                        'score_response': score_response
-                    })
-
-                    # 🆕 优化1应用: 使用已初始化的keyword_tracker
-                    if keyword_tracker and score_response.extracted_keywords:
-                        try:
-                            keyword_tracker.record_keywords(
-                                keywords=score_response.extracted_keywords,
-                                paper_id=paper.paper_id,
-                                source=source
-                            )
-                            logger.debug(f"已记录 {len(score_response.extracted_keywords)} 个关键词")
-                        except Exception as e:
-                            logger.warning(f"关键词记录失败 ({paper.paper_id[:30]}...): {e}")
-
-                    # 标记为已处理（避免下次重复）
-                    search_agent.mark_as_processed(paper.paper_id, source)
-
-                    # 更新进度条
-                    pbar.update(1)
+                        result = _score_single_paper(
+                            paper, source, analysis_agent, all_keywords,
+                            translation_cache, cache_lock, keyword_tracker, search_agent
+                        )
+                        scored_papers.append(result)
+                        pbar.update(1)
 
             scored_papers_by_source[source] = scored_papers
 
@@ -204,7 +298,7 @@ def main():
 
         # 🆕 优化2统计: 显示翻译缓存效果
         if translation_cache:
-            cache_savings = len(translation_cache) - total_papers_count
+            cache_savings = total_papers_count - len(translation_cache)
             if cache_savings > 0:
                 logger.info(f"  翻译缓存节省了 {cache_savings} 次API调用")
 
@@ -233,39 +327,60 @@ def main():
 
             qualified_papers_with_analysis = []
 
-            # 使用tqdm显示深度分析进度
-            with tqdm(total=len(papers_with_pdf), desc=f"🔬 [{source}] 深度分析", unit="篇", ncols=100) as pbar:
-                for idx, paper_info in enumerate(papers_with_pdf, 1):
-                    # 更新进度条
-                    pbar.set_description(f"🔬 [{source}] [{idx}/{len(papers_with_pdf)}]")
-                    pbar.set_postfix_str(f"{paper_info['title'][:35]}...")
+            if settings.ENABLE_CONCURRENCY and len(papers_with_pdf) > 1:
+                # ========== 并发深度分析模式 ==========
+                logger.info(f"    使用并发模式 (workers={settings.CONCURRENCY_WORKERS})")
+                with tqdm(total=len(papers_with_pdf), desc=f"🔬 [{source}] 深度分析", unit="篇", ncols=100) as pbar:
+                    with ThreadPoolExecutor(max_workers=settings.CONCURRENCY_WORKERS) as executor:
+                        futures = {
+                            executor.submit(
+                                _deep_analyze_single_paper, paper_info, analysis_agent
+                            ): paper_info
+                            for paper_info in papers_with_pdf
+                        }
+                        for future in as_completed(futures):
+                            paper_info = futures[future]
+                            try:
+                                result = future.result()
+                                if result:
+                                    qualified_papers_with_analysis.append({
+                                        'paper_id': result['paper_id'],
+                                        'analysis': result['analysis']
+                                    })
+                                    pm = result.get('paper_meta')
+                                    if pm and pm.arxiv_id:
+                                        pbar.write(f"  ✓ 完成 (via arXiv {pm.arxiv_id}): {result['title'][:50]}...")
+                                    else:
+                                        pbar.write(f"  ✓ 完成: {result['title'][:55]}...")
+                                else:
+                                    pbar.write(f"  ✗ 失败: {paper_info['title'][:55]}...")
+                            except Exception as e:
+                                logger.error(f"深度分析异常 ({paper_info['title'][:30]}...): {e}")
+                                pbar.write(f"  ✗ 异常: {paper_info['title'][:55]}...")
+                            pbar.update(1)
+            else:
+                # ========== 顺序深度分析模式 ==========
+                with tqdm(total=len(papers_with_pdf), desc=f"🔬 [{source}] 深度分析", unit="篇", ncols=100) as pbar:
+                    for idx, paper_info in enumerate(papers_with_pdf, 1):
+                        pbar.set_description(f"🔬 [{source}] [{idx}/{len(papers_with_pdf)}]")
+                        pbar.set_postfix_str(f"{paper_info['title'][:35]}...")
 
-                    # 获取最佳的PDF URL
-                    paper_meta = paper_info.get('paper_metadata')
-                    pdf_url = paper_meta.get_best_pdf_url() if paper_meta else paper_info.get('pdf_url')
+                        result = _deep_analyze_single_paper(paper_info, analysis_agent)
 
-                    # 下载PDF并深度分析
-                    analysis = analysis_agent.deep_analyze(
-                        title=paper_info['title'],
-                        pdf_url=pdf_url,
-                        abstract=paper_info['abstract'],
-                        fallback_to_abstract=True
-                    )
-
-                    if analysis:
-                        qualified_papers_with_analysis.append({
-                            'paper_id': paper_info['paper_id'],
-                            'analysis': analysis
-                        })
-                        # 显示arXiv来源信息
-                        if paper_meta and paper_meta.arxiv_id:
-                            pbar.write(f"  ✓ 完成 (via arXiv {paper_meta.arxiv_id}): {paper_info['title'][:50]}...")
+                        if result:
+                            qualified_papers_with_analysis.append({
+                                'paper_id': result['paper_id'],
+                                'analysis': result['analysis']
+                            })
+                            pm = result.get('paper_meta')
+                            if pm and pm.arxiv_id:
+                                pbar.write(f"  ✓ 完成 (via arXiv {pm.arxiv_id}): {result['title'][:50]}...")
+                            else:
+                                pbar.write(f"  ✓ 完成: {result['title'][:55]}...")
                         else:
-                            pbar.write(f"  ✓ 完成: {paper_info['title'][:55]}...")
-                    else:
-                        pbar.write(f"  ✗ 失败: {paper_info['title'][:55]}...")
+                            pbar.write(f"  ✗ 失败: {paper_info['title'][:55]}...")
 
-                    pbar.update(1)
+                        pbar.update(1)
 
             analyses_by_source[source] = qualified_papers_with_analysis
             logger.info(f"    [{source}] 深度分析完成: {len(qualified_papers_with_analysis)}/{len(papers_with_pdf)} 篇成功")
@@ -285,7 +400,7 @@ def main():
             logger.info(">>> 阶段7: 运行每日关键词标准化...")
             try:
                 from agents.keyword_tracker import KeywordTracker
-                tracker = KeywordTracker()
+                tracker = keyword_tracker or KeywordTracker()
                 stats = tracker.run_daily_normalization()
                 logger.info(f"  标准化完成: 处理 {stats['processed']} 个, 新增规范词 {stats['new_canonical']}, 合并 {stats['merged']}")
 
@@ -339,18 +454,40 @@ def main():
         logger.info("=" * 80)
         logger.info("✅ 任务完成！")
 
-        # 统计各数据源
-        total_qualified = 0
-        total_analyzed = 0
+        # 收集 Top-N 论文（按总分排序，用于通知）
+        all_scored_flat = []
+        for source, scored_papers in scored_papers_by_source.items():
+            for p in scored_papers:
+                all_scored_flat.append({
+                    'title': p['title'],
+                    'score': p['score_response'].total_score,
+                    'source': source,
+                    'tldr': p['score_response'].tldr,
+                    'url': p['url']
+                })
+        all_scored_flat.sort(key=lambda x: x['score'], reverse=True)
+        top_papers = all_scored_flat[:settings.NOTIFICATION_TOP_N]
+
+        # 构建运行结果
+        run_result = RunResult(
+            run_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            total_papers_fetched=total_papers_count,
+            top_papers=top_papers,
+        )
 
         for source, scored_papers in scored_papers_by_source.items():
             source_qualified = sum(1 for p in scored_papers if p['score_response'].is_qualified)
             source_analyzed = len(analyses_by_source.get(source, []))
-            total_qualified += source_qualified
-            total_analyzed += source_analyzed
+            run_result.papers_by_source[source] = len(scored_papers)
+            run_result.qualified_by_source[source] = source_qualified
+            run_result.analyzed_by_source[source] = source_analyzed
+            run_result.total_qualified += source_qualified
+            run_result.total_analyzed += source_analyzed
             logger.info(f"  [{source}] 抓取: {len(scored_papers)} | 及格: {source_qualified} | 深度分析: {source_analyzed}")
 
-        logger.info(f"  - 总计: 抓取 {total_papers_count} | 及格 {total_qualified} | 深度分析 {total_analyzed}")
+        run_result.report_paths = {s: str(p) for s, p in report_paths.items()}
+
+        logger.info(f"  - 总计: 抓取 {total_papers_count} | 及格 {run_result.total_qualified} | 深度分析 {run_result.total_analyzed}")
         logger.info(f"  - 报告位置: {settings.REPORTS_DIR}")
         logger.info("=" * 80)
 
@@ -361,8 +498,8 @@ def main():
         print("📊 统计信息:")
 
         for source, scored_papers in scored_papers_by_source.items():
-            source_qualified = sum(1 for p in scored_papers if p['score_response'].is_qualified)
-            source_analyzed = len(analyses_by_source.get(source, []))
+            source_qualified = run_result.qualified_by_source.get(source, 0)
+            source_analyzed = run_result.analyzed_by_source.get(source, 0)
             pct = (source_qualified / len(scored_papers) * 100) if scored_papers else 0
             print(f"   [{source.upper()}]")
             print(f"     • 抓取: {len(scored_papers)} 篇")
@@ -376,6 +513,19 @@ def main():
 
         print("=" * 80 + "\n")
 
+        # ==================== 阶段8: 发送通知 ====================
+        if settings.ENABLE_NOTIFICATIONS:
+            logger.info(">>> 阶段8: 发送通知...")
+            try:
+                from agents.notifier import NotifierAgent
+                notifier = NotifierAgent()
+                notifier.notify(run_result)
+                logger.info("通知发送完成")
+            except Exception as e:
+                logger.warning(f"通知发送失败: {e}")
+
+        return run_result
+
     except KeyboardInterrupt:
         logger.warning("\n用户中断程序执行")
         print("\n⚠️  程序已被用户中断")
@@ -385,9 +535,33 @@ def main():
         print("详细错误信息已记录到日志文件")
         import traceback
         traceback.print_exc()
+
+        # 发送失败通知
+        if settings.ENABLE_NOTIFICATIONS:
+            try:
+                from agents.notifier import NotifierAgent
+                fail_result = RunResult(
+                    run_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    success=False,
+                    error_message=str(e)
+                )
+                notifier = NotifierAgent()
+                notifier.notify(fail_result)
+            except Exception:
+                pass  # 通知本身失败不应阻塞
+
         raise
 
 
 if __name__ == "__main__":
     settings.ensure_directories()
+
+    # 自动更新检查
+    if settings.AUTO_UPDATE_ENABLED:
+        try:
+            from utils.updater import check_and_update
+            check_and_update(logger)
+        except Exception as e:
+            logger.warning(f"自动更新检查失败: {e}")
+
     main()

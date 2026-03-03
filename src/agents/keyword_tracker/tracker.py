@@ -41,7 +41,7 @@ class KeywordTracker:
         from config import settings
 
         if db_path is None:
-            db_path = getattr(settings, 'KEYWORD_DB_PATH', settings.DATA_DIR / "keywords.db")
+            db_path = getattr(settings, 'KEYWORD_DB_PATH', settings.DATA_DIR / "keywords" / "keywords.db")
 
         self.db = KeywordDatabase(db_path)
         self.normalizer = KeywordNormalizer()

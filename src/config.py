@@ -6,8 +6,8 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# 1. 定义基础路径：获取当前脚本所在目录作为项目根目录
-PROJECT_ROOT = Path(__file__).resolve().parent
+# 1. 定义基础路径：获取项目根目录（src/ 的上级目录）
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 class LLMConfig(BaseModel):
     """
@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     """
     系统全局配置类，集中管理所有应用配置参数。
 
-    优先级：search_config.json > .env文件 > 默认值
+    优先级：configs/config.json > .env文件 > 默认值
     """
     # ==================== 路径配置 ====================
     PROJECT_ROOT: Path = PROJECT_ROOT
@@ -38,8 +38,11 @@ class Settings(BaseSettings):
     REF_PDF_DIR: Path = DATA_DIR / "reference_pdfs"  # 参考论文PDF存储路径
     REPORTS_DIR: Path = DATA_DIR / "reports"  # 生成的研究报告存储路径
 
+    # 配置目录
+    CONFIGS_DIR: Path = PROJECT_ROOT / "configs"
+
     # 报告模板目录
-    REPORT_TEMPLATES_DIR: Path = PROJECT_ROOT / "report_templates"
+    REPORT_TEMPLATES_DIR: Path = CONFIGS_DIR / "report_templates"
 
     # 从Arxiv下载的临时PDF存储目录
     DOWNLOAD_DIR: Path = DATA_DIR / "downloaded_pdfs"
@@ -88,7 +91,7 @@ class Settings(BaseSettings):
 
     # ==================== 关键词追踪配置 ====================
     KEYWORD_TRACKER_ENABLED: bool = True
-    KEYWORD_DB_PATH: Path = DATA_DIR / "keywords.db"
+    KEYWORD_DB_PATH: Path = DATA_DIR / "keywords" / "keywords.db"
     KEYWORD_NORMALIZATION_ENABLED: bool = True
     KEYWORD_NORMALIZATION_BATCH_SIZE: int = 50
     KEYWORD_TREND_DEFAULT_DAYS: int = 30
@@ -96,6 +99,64 @@ class Settings(BaseSettings):
     KEYWORD_TREND_TOP_N: int = 5
     KEYWORD_REPORT_ENABLED: bool = True
     KEYWORD_REPORT_FREQUENCY: str = "weekly"  # daily, weekly, monthly, always
+
+    # ==================== 通知配置 ====================
+    ENABLE_NOTIFICATIONS: bool = False
+
+    # SMTP 邮件配置
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""  # 发件人地址，默认使用 SMTP_USER
+    SMTP_TO: str = ""  # 收件人地址，逗号分隔多个
+    SMTP_USE_TLS: bool = True
+
+    # Webhook 配置
+    WECHAT_WEBHOOK_URL: str = ""  # 企业微信机器人 Webhook URL
+    DINGTALK_WEBHOOK_URL: str = ""  # 钉钉机器人 Webhook URL
+    DINGTALK_SECRET: str = ""  # 钉钉机器人签名密钥（可选）
+    TELEGRAM_BOT_TOKEN: str = ""  # Telegram Bot Token
+    TELEGRAM_CHAT_ID: str = ""  # Telegram Chat ID
+    SLACK_WEBHOOK_URL: str = ""  # Slack Incoming Webhook URL
+    GENERIC_WEBHOOK_URL: str = ""  # 通用 Webhook URL
+
+    # 通知偏好
+    NOTIFY_ON_SUCCESS: bool = True  # 成功时发送通知
+    NOTIFY_ON_FAILURE: bool = True  # 失败时发送通知
+    NOTIFY_ATTACH_REPORTS: bool = False  # 邮件是否附带报告文件
+
+    # ==================== 重试配置 ====================
+    RETRY_MAX_ATTEMPTS: int = 3  # 最大重试次数
+    RETRY_MIN_WAIT: int = 2  # 最小等待时间（秒），指数退避起始值
+    RETRY_MAX_WAIT: int = 30  # 最大等待时间（秒）
+
+    # ==================== 日志配置 ====================
+    LOG_KEEP_DAYS: int = 30  # 日志保留天数
+    LOG_ROTATION_TYPE: str = "time"  # "time" (按天轮换) 或 "size" (按大小轮换)
+
+    # ==================== 并发配置 ====================
+    ENABLE_CONCURRENCY: bool = False  # 是否启用并发
+    CONCURRENCY_WORKERS: int = 3  # 并发线程数（建议不超过5）
+
+    # ==================== 报告配置 ====================
+    ENABLE_HTML_REPORT: bool = True  # 是否同时生成HTML格式报告
+
+    # ==================== PDF 解析配置 ====================
+    PDF_PARSER_MODE: str = "mineru"  # PDF 解析模式: "mineru" (云端API) 或 "pymupdf" (本地解析)
+    MINERU_API_KEY: str = ""  # MinerU API Token
+    MINERU_MODEL_VERSION: str = "pipeline"  # MinerU 模型版本: pipeline 或 vlm
+    MINERU_POLL_INTERVAL: int = 3  # MinerU 任务状态轮询间隔（秒）
+    MINERU_POLL_TIMEOUT: int = 300  # MinerU 任务超时时间（秒）
+
+    # ==================== 自动更新配置 ====================
+    AUTO_UPDATE_ENABLED: bool = True  # 是否启用自动更新检查
+
+    # ==================== 通知扩展 ====================
+    NOTIFICATION_TOP_N: int = 5  # 通知中包含的Top-N高分论文数量
+
+    # ==================== 搜索扩展 ====================
+    MAX_RESULTS_PER_SOURCE: Dict[str, int] = {}  # 按数据源单独配置max_results
 
     # ==================== 评分配置 ====================
     # 关键词相关度评分
@@ -130,18 +191,18 @@ class Settings(BaseSettings):
 
     def load_from_search_config(self, config_path: Optional[Path] = None) -> Dict[str, Any]:
         """
-        从 search_config.json 加载配置并覆盖默认值。
+        从 configs/config.json 加载配置并覆盖默认值。
 
         注意：LLM 配置完全从 .env 文件加载，不从此配置文件加载。
 
         参数:
-            config_path: 配置文件路径，默认为 PROJECT_ROOT/search_config.json
+            config_path: 配置文件路径，默认为 PROJECT_ROOT/configs/config.json
 
         返回:
             dict: 配置字典
         """
         if config_path is None:
-            config_path = self.PROJECT_ROOT / "search_config.json"
+            config_path = self.PROJECT_ROOT / "configs" / "config.json"
 
         if not config_path.exists():
             print(f"警告: 未找到配置文件 {config_path}，使用默认配置")
@@ -156,6 +217,7 @@ class Settings(BaseSettings):
                 settings = config["search_settings"]
                 self.SEARCH_DAYS = settings.get("search_days", self.SEARCH_DAYS)
                 self.MAX_RESULTS = settings.get("max_results", self.MAX_RESULTS)
+                self.MAX_RESULTS_PER_SOURCE = settings.get("max_results_per_source", {})
 
             # 加载目标领域
             if "target_domains" in config:
@@ -248,7 +310,7 @@ class Settings(BaseSettings):
                 self.KEYWORD_TRACKER_ENABLED = kt.get("enabled", True)
 
                 if "database" in kt:
-                    db_path = kt["database"].get("path", "data/keywords.db")
+                    db_path = kt["database"].get("path", "data/keywords/keywords.db")
                     self.KEYWORD_DB_PATH = self.PROJECT_ROOT / db_path
 
                 if "normalization" in kt:
@@ -271,10 +333,56 @@ class Settings(BaseSettings):
                     self.KEYWORD_REPORT_ENABLED = report_cfg.get("enabled", True)
                     self.KEYWORD_REPORT_FREQUENCY = report_cfg.get("frequency", "weekly")
 
+            # 加载通知配置
+            if "notifications" in config:
+                notif = config["notifications"]
+                self.ENABLE_NOTIFICATIONS = notif.get("enabled", False)
+                self.NOTIFY_ON_SUCCESS = notif.get("on_success", True)
+                self.NOTIFY_ON_FAILURE = notif.get("on_failure", True)
+                self.NOTIFY_ATTACH_REPORTS = notif.get("attach_reports", False)
+                self.NOTIFICATION_TOP_N = notif.get("top_n", 5)
+
+            # 加载重试配置
+            if "retry" in config:
+                retry_cfg = config["retry"]
+                self.RETRY_MAX_ATTEMPTS = retry_cfg.get("max_attempts", 3)
+                self.RETRY_MIN_WAIT = retry_cfg.get("min_wait", 2)
+                self.RETRY_MAX_WAIT = retry_cfg.get("max_wait", 30)
+
+            # 加载日志配置
+            if "logging" in config:
+                log_cfg = config["logging"]
+                self.LOG_KEEP_DAYS = log_cfg.get("keep_days", 30)
+                self.LOG_ROTATION_TYPE = log_cfg.get("rotation_type", "time")
+
+            # 加载并发配置
+            if "concurrency" in config:
+                conc_cfg = config["concurrency"]
+                self.ENABLE_CONCURRENCY = conc_cfg.get("enabled", False)
+                self.CONCURRENCY_WORKERS = conc_cfg.get("workers", 3)
+
+            # 加载报告设置
+            if "report_settings" in config:
+                rpt_cfg = config["report_settings"]
+                self.ENABLE_HTML_REPORT = rpt_cfg.get("enable_html_report", False)
+
+            # 加载 PDF 解析配置
+            if "pdf_parser" in config:
+                pdf_cfg = config["pdf_parser"]
+                self.PDF_PARSER_MODE = pdf_cfg.get("mode", "mineru")
+                self.MINERU_MODEL_VERSION = pdf_cfg.get("mineru_model_version", "pipeline")
+                self.MINERU_POLL_INTERVAL = pdf_cfg.get("poll_interval", 3)
+                self.MINERU_POLL_TIMEOUT = pdf_cfg.get("poll_timeout", 300)
+
+            # 加载自动更新配置
+            if "auto_update" in config:
+                au_cfg = config["auto_update"]
+                self.AUTO_UPDATE_ENABLED = au_cfg.get("enabled", True)
+
             return config
 
         except Exception as e:
-            print(f"加载 search_config.json 失败: {e}")
+            print(f"加载 configs/config.json 失败: {e}")
             import traceback
             traceback.print_exc()
             return {}
@@ -319,6 +427,29 @@ class Settings(BaseSettings):
         self.HISTORY_DIR.mkdir(parents=True, exist_ok=True)
         self.REPORT_TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
 
+    def load_report_css(self, css_name: str = "html_report.css") -> str:
+        """
+        加载 HTML 报告的 CSS 样式文件。
+
+        参数:
+            css_name: CSS 文件名，默认为 html_report.css
+
+        返回:
+            str: CSS 样式字符串，文件不存在时返回空字符串
+        """
+        css_path = self.REPORT_TEMPLATES_DIR / css_name
+
+        if not css_path.exists():
+            print(f"警告: 未找到 CSS 样式文件 {css_path}，将使用空样式")
+            return ""
+
+        try:
+            with open(css_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception as e:
+            print(f"加载 CSS 样式文件 {css_name} 失败: {e}")
+            return ""
+
     def load_report_template(self, template_name: str = "basic_report_template.json") -> Dict[str, Any]:
         """
         加载报告模板配置。
@@ -345,7 +476,7 @@ class Settings(BaseSettings):
 # 实例化全局配置单例对象，应用程序全局共享
 settings = Settings()
 
-# 从 search_config.json 加载配置（会覆盖默认值）
+# 从 configs/config.json 加载配置（会覆盖默认值）
 settings.load_from_search_config()
 
 # 自动创建所有必需的工作目录

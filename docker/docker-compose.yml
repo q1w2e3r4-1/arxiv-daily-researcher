@@ -1,0 +1,54 @@
+services:
+  arxiv-researcher:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: arxiv-daily-researcher
+    restart: unless-stopped
+
+    # 使用宿主机网络，使容器可直接访问 localhost 上的本地 LLM API 等服务
+    network_mode: host
+
+    # 从 .env 文件加载 API 密钥等敏感配置
+    env_file:
+      - ../.env
+
+    # 容器运行参数
+    environment:
+      - TZ=Asia/Shanghai # 时区
+      - CRON_SCHEDULE=0 8 * * * # 定时执行 (默认每天 8:00)
+      - RUN_ON_STARTUP=true # 容器启动时是否立即运行一次
+      - MODE=cron # cron=定时模式, run-once=单次运行
+
+    volumes:
+      # 持久化数据 (报告、历史、数据库)
+      - ../data:/app/data
+
+      # 日志
+      - ../logs:/app/logs
+
+      # 配置文件 (只读挂载)
+      - ../configs:/app/configs:ro
+
+    # 资源限制 (适配 NAS 等低配设备)
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+    # 健康检查
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import sys; sys.path.insert(0,'src'); import config; print('OK')" ]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
