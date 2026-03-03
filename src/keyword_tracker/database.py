@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class KeywordRecord:
     """原始关键词记录"""
+
     id: int
     keyword: str
     paper_id: str
@@ -28,6 +29,7 @@ class KeywordRecord:
 @dataclass
 class NormalizedKeyword:
     """标准化关键词"""
+
     id: int
     canonical_keyword: str
     category: Optional[str] = None
@@ -36,6 +38,7 @@ class NormalizedKeyword:
 @dataclass
 class KeywordTrendData:
     """关键词趋势数据"""
+
     keyword: str
     daily_counts: Dict[date, int]
 
@@ -63,15 +66,17 @@ class KeywordDatabase:
         self._ensure_tables()
 
     def _get_connection(self) -> sqlite3.Connection:
-        """获取数据库连接"""
-        conn = sqlite3.connect(self.db_path)
+        """获取数据库连接（使用 WAL 模式以支持并发读写）"""
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
     def _ensure_tables(self) -> None:
         """创建数据库表（如不存在）"""
         with self._get_connection() as conn:
-            conn.executescript("""
+            conn.executescript(
+                """
                 -- 原始关键词表
                 CREATE TABLE IF NOT EXISTS keywords (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,15 +122,12 @@ class KeywordDatabase:
                 CREATE INDEX IF NOT EXISTS idx_keywords_normalized ON keywords(normalized_keyword_id);
                 CREATE INDEX IF NOT EXISTS idx_daily_counts_date ON keyword_daily_counts(count_date);
                 CREATE INDEX IF NOT EXISTS idx_aliases_raw ON keyword_aliases(raw_keyword);
-            """)
+            """
+            )
             conn.commit()
 
     def insert_keywords(
-        self,
-        keywords: List[str],
-        paper_id: str,
-        source: str,
-        extracted_date: Optional[date] = None
+        self, keywords: List[str], paper_id: str, source: str, extracted_date: Optional[date] = None
     ) -> List[int]:
         """
         插入原始关键词
@@ -159,9 +161,9 @@ class KeywordDatabase:
                         (keyword, paper_id, source, extracted_date, normalized_keyword_id)
                         VALUES (?, ?, ?, ?, ?)
                         """,
-                        (kw_lower, paper_id, source, extracted_date.isoformat(), normalized_id)
+                        (kw_lower, paper_id, source, extracted_date.isoformat(), normalized_id),
                     )
-                    if cursor.lastrowid:
+                    if cursor.rowcount > 0:
                         inserted_ids.append(cursor.lastrowid)
                 except sqlite3.Error as e:
                     logger.warning(f"插入关键词失败 '{kw}': {e}")
@@ -170,11 +172,13 @@ class KeywordDatabase:
 
         return inserted_ids
 
-    def _find_normalized_id_by_alias(self, conn: sqlite3.Connection, raw_keyword: str) -> Optional[int]:
+    def _find_normalized_id_by_alias(
+        self, conn: sqlite3.Connection, raw_keyword: str
+    ) -> Optional[int]:
         """通过别名表查找标准化ID"""
         cursor = conn.execute(
             "SELECT normalized_keyword_id FROM keyword_aliases WHERE raw_keyword = ?",
-            (raw_keyword,)
+            (raw_keyword,),
         )
         row = cursor.fetchone()
         return row[0] if row else None
@@ -198,16 +202,16 @@ class KeywordDatabase:
                 ORDER BY created_at DESC
                 LIMIT ?
                 """,
-                (limit,)
+                (limit,),
             )
             return [
                 KeywordRecord(
-                    id=row['id'],
-                    keyword=row['keyword'],
-                    paper_id=row['paper_id'],
-                    source=row['source'],
-                    extracted_date=date.fromisoformat(row['extracted_date']),
-                    normalized_keyword_id=row['normalized_keyword_id']
+                    id=row["id"],
+                    keyword=row["keyword"],
+                    paper_id=row["paper_id"],
+                    source=row["source"],
+                    extracted_date=date.fromisoformat(row["extracted_date"]),
+                    normalized_keyword_id=row["normalized_keyword_id"],
                 )
                 for row in cursor.fetchall()
             ]
@@ -231,14 +235,12 @@ class KeywordDatabase:
                 AND keyword NOT IN (SELECT raw_keyword FROM keyword_aliases)
                 LIMIT ?
                 """,
-                (limit,)
+                (limit,),
             )
-            return [row['keyword'] for row in cursor.fetchall()]
+            return [row["keyword"] for row in cursor.fetchall()]
 
     def get_or_create_normalized_keyword(
-        self,
-        canonical_keyword: str,
-        category: Optional[str] = None
+        self, canonical_keyword: str, category: Optional[str] = None
     ) -> int:
         """
         获取或创建标准化关键词
@@ -255,8 +257,7 @@ class KeywordDatabase:
         with self._get_connection() as conn:
             # 先查找是否存在
             cursor = conn.execute(
-                "SELECT id FROM normalized_keywords WHERE canonical_keyword = ?",
-                (canonical_lower,)
+                "SELECT id FROM normalized_keywords WHERE canonical_keyword = ?", (canonical_lower,)
             )
             row = cursor.fetchone()
             if row:
@@ -265,16 +266,13 @@ class KeywordDatabase:
             # 创建新的
             cursor = conn.execute(
                 "INSERT INTO normalized_keywords (canonical_keyword, category) VALUES (?, ?)",
-                (canonical_lower, category)
+                (canonical_lower, category),
             )
             conn.commit()
             return cursor.lastrowid
 
     def add_keyword_alias(
-        self,
-        raw_keyword: str,
-        normalized_id: int,
-        confidence: float = 1.0
+        self, raw_keyword: str, normalized_id: int, confidence: float = 1.0
     ) -> None:
         """
         添加关键词别名映射
@@ -293,15 +291,11 @@ class KeywordDatabase:
                 (raw_keyword, normalized_keyword_id, confidence)
                 VALUES (?, ?, ?)
                 """,
-                (raw_lower, normalized_id, confidence)
+                (raw_lower, normalized_id, confidence),
             )
             conn.commit()
 
-    def link_keywords_to_normalized(
-        self,
-        raw_keyword: str,
-        normalized_id: int
-    ) -> int:
+    def link_keywords_to_normalized(self, raw_keyword: str, normalized_id: int) -> int:
         """
         将所有匹配的原始关键词链接到标准化形式
 
@@ -321,7 +315,7 @@ class KeywordDatabase:
                 SET normalized_keyword_id = ?
                 WHERE keyword = ? AND normalized_keyword_id IS NULL
                 """,
-                (normalized_id, raw_lower)
+                (normalized_id, raw_lower),
             )
             conn.commit()
             return cursor.rowcount
@@ -332,7 +326,7 @@ class KeywordDatabase:
             cursor = conn.execute(
                 "SELECT canonical_keyword FROM normalized_keywords ORDER BY canonical_keyword"
             )
-            return [row['canonical_keyword'] for row in cursor.fetchall()]
+            return [row["canonical_keyword"] for row in cursor.fetchall()]
 
     def update_daily_counts(self, for_date: Optional[date] = None) -> None:
         """
@@ -347,8 +341,7 @@ class KeywordDatabase:
         with self._get_connection() as conn:
             # 删除当天旧统计
             conn.execute(
-                "DELETE FROM keyword_daily_counts WHERE count_date = ?",
-                (for_date.isoformat(),)
+                "DELETE FROM keyword_daily_counts WHERE count_date = ?", (for_date.isoformat(),)
             )
 
             # 插入新统计
@@ -361,14 +354,12 @@ class KeywordDatabase:
                 AND extracted_date = ?
                 GROUP BY normalized_keyword_id
                 """,
-                (for_date.isoformat(), for_date.isoformat())
+                (for_date.isoformat(), for_date.isoformat()),
             )
             conn.commit()
 
     def get_top_keywords(
-        self,
-        days: int = 30,
-        limit: int = 20
+        self, days: int = 30, limit: int = 20
     ) -> List[Tuple[str, int, Optional[str]]]:
         """
         获取热门关键词排名
@@ -396,16 +387,15 @@ class KeywordDatabase:
                 ORDER BY total_count DESC
                 LIMIT ?
                 """,
-                (start_date, limit)
+                (start_date, limit),
             )
-            return [(row['canonical_keyword'], row['total_count'], row['category'])
-                    for row in cursor.fetchall()]
+            return [
+                (row["canonical_keyword"], row["total_count"], row["category"])
+                for row in cursor.fetchall()
+            ]
 
     def get_keyword_trends(
-        self,
-        days: int = 30,
-        keywords: Optional[List[str]] = None,
-        limit: int = 10
+        self, days: int = 30, keywords: Optional[List[str]] = None, limit: int = 10
     ) -> List[KeywordTrendData]:
         """
         获取关键词趋势数据
@@ -443,13 +433,13 @@ class KeywordDatabase:
                     AND kdc.count_date >= ?
                     ORDER BY kdc.count_date
                     """,
-                    (kw, start_date.isoformat())
+                    (kw, start_date.isoformat()),
                 )
 
                 daily_counts = {}
                 for row in cursor.fetchall():
-                    d = date.fromisoformat(row['count_date'])
-                    daily_counts[d] = row['paper_count']
+                    d = date.fromisoformat(row["count_date"])
+                    daily_counts[d] = row["paper_count"]
 
                 if daily_counts:
                     results.append(KeywordTrendData(keyword=kw, daily_counts=daily_counts))
@@ -462,15 +452,17 @@ class KeywordDatabase:
             stats = {}
 
             cursor = conn.execute("SELECT COUNT(*) FROM keywords")
-            stats['total_keywords'] = cursor.fetchone()[0]
+            stats["total_keywords"] = cursor.fetchone()[0]
 
-            cursor = conn.execute("SELECT COUNT(*) FROM keywords WHERE normalized_keyword_id IS NOT NULL")
-            stats['normalized_keywords'] = cursor.fetchone()[0]
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM keywords WHERE normalized_keyword_id IS NOT NULL"
+            )
+            stats["normalized_keywords"] = cursor.fetchone()[0]
 
             cursor = conn.execute("SELECT COUNT(*) FROM normalized_keywords")
-            stats['canonical_keywords'] = cursor.fetchone()[0]
+            stats["canonical_keywords"] = cursor.fetchone()[0]
 
             cursor = conn.execute("SELECT COUNT(*) FROM keyword_aliases")
-            stats['aliases'] = cursor.fetchone()[0]
+            stats["aliases"] = cursor.fetchone()[0]
 
             return stats

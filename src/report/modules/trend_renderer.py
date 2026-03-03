@@ -28,7 +28,8 @@ class TrendRenderer(BaseModuleRenderer):
         """延迟加载 KeywordTracker"""
         if self._tracker is None:
             try:
-                from agents.keyword_tracker import KeywordTracker
+                from keyword_tracker import KeywordTracker
+
                 self._tracker = KeywordTracker()
             except Exception:
                 return None
@@ -53,7 +54,7 @@ class TrendRenderer(BaseModuleRenderer):
 
         # 检查是否有数据
         stats = self.tracker.get_stats()
-        if stats.get('normalized_keywords', 0) == 0:
+        if stats.get("normalized_keywords", 0) == 0:
             return []
 
         lines = []
@@ -71,9 +72,7 @@ class TrendRenderer(BaseModuleRenderer):
         # 柱状图
         if chart_type in ("bar", "both"):
             bar_chart = self.tracker.generate_bar_chart(
-                days=days,
-                limit=top_n,
-                title="Top Research Keywords"
+                days=days, limit=top_n, title="Top Research Keywords"
             )
             if bar_chart:
                 lines.append("### Top Keywords")
@@ -84,9 +83,7 @@ class TrendRenderer(BaseModuleRenderer):
         # 趋势线图
         if chart_type in ("line", "both"):
             trend_chart = self.tracker.generate_trend_chart(
-                days=days,
-                limit=trend_n,
-                title="Keyword Trends"
+                days=days, limit=trend_n, title="Keyword Trends"
             )
             if trend_chart:
                 lines.append("### Keyword Trends Over Time")
@@ -115,9 +112,9 @@ class TrendRenderer(BaseModuleRenderer):
             lines.append("|------|---------|-------|----------|")
 
             for i, kw_data in enumerate(top_keywords, 1):
-                keyword = kw_data.get('keyword', '')
-                count = kw_data.get('count', 0)
-                category = kw_data.get('category') or '-'
+                keyword = kw_data.get("keyword", "")
+                count = kw_data.get("count", 0)
+                category = kw_data.get("category") or "-"
                 lines.append(f"| {i} | {keyword} | {count} | {category} |")
 
             lines.append("")

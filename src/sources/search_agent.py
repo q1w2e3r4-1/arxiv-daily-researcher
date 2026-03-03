@@ -8,10 +8,10 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Optional
 
-from .sources.base_source import BasePaperSource, PaperMetadata
-from .sources.arxiv_source import ArxivSource
-from .sources.openalex_source import OpenAlexSource, JOURNAL_ISSN_MAP
-from .sources.semantic_scholar_enricher import SemanticScholarEnricher
+from .base_source import BasePaperSource, PaperMetadata
+from .arxiv_source import ArxivSource
+from .openalex_source import OpenAlexSource, JOURNAL_ISSN_MAP
+from .semantic_scholar_enricher import SemanticScholarEnricher
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class SearchAgent:
         openalex_email: str = None,
         openalex_api_key: str = None,
         enable_semantic_scholar: bool = True,
-        semantic_scholar_api_key: str = None
+        semantic_scholar_api_key: str = None,
     ):
         """
         初始化搜索调度器。
@@ -76,7 +76,9 @@ class SearchAgent:
             if api_key:
                 logger.info("[SearchAgent] 已启用 Semantic Scholar TLDR 增强（使用 API Key）")
             else:
-                logger.info("[SearchAgent] 已启用 Semantic Scholar TLDR 增强（公共 API，限速 100次/5分钟）")
+                logger.info(
+                    "[SearchAgent] 已启用 Semantic Scholar TLDR 增强（公共 API，限速 100次/5分钟）"
+                )
 
         # 初始化数据源
         self.sources: Dict[str, BasePaperSource] = {}
@@ -91,8 +93,7 @@ class SearchAgent:
         # 检查是否启用 ArXiv
         if "arxiv" in self.enabled_sources:
             self.sources["arxiv"] = ArxivSource(
-                history_dir=self.history_dir,
-                max_results=self._get_max_results("arxiv")
+                history_dir=self.history_dir, max_results=self._get_max_results("arxiv")
             )
             logger.info("[SearchAgent] 已启用 ArXiv 数据源")
 
@@ -119,7 +120,7 @@ class SearchAgent:
                 journals=journal_codes,
                 max_results=openalex_max,
                 email=self.openalex_email,
-                api_key=self.openalex_api_key
+                api_key=self.openalex_api_key,
             )
             self._journal_codes = journal_codes
             logger.info(f"[SearchAgent] 已启用 OpenAlex 数据源，期刊: {journal_codes}")
@@ -144,10 +145,7 @@ class SearchAgent:
 
             try:
                 if source_name == "arxiv":
-                    papers = source.fetch_papers(
-                        days=days,
-                        domains=self.arxiv_domains
-                    )
+                    papers = source.fetch_papers(days=days, domains=self.arxiv_domains)
                     results["arxiv"] = papers
 
                 elif source_name == "openalex":
@@ -169,6 +167,7 @@ class SearchAgent:
             except Exception as e:
                 logger.error(f"[{source_name}] 抓取失败: {e}")
                 import traceback
+
                 traceback.print_exc()
 
         # 统计
@@ -200,14 +199,16 @@ class SearchAgent:
                 paper_info = self.semantic_scholar_enricher.get_paper_info(paper.doi)
                 if paper_info:
                     # 设置 TLDR
-                    if paper_info.get('tldr'):
-                        paper.semantic_scholar_tldr = paper_info['tldr']
+                    if paper_info.get("tldr"):
+                        paper.semantic_scholar_tldr = paper_info["tldr"]
                         enriched_count += 1
 
                     # 设置 arXiv 信息（用于后续深度分析）
-                    if paper_info.get('arxiv_id'):
-                        paper.arxiv_id = paper_info['arxiv_id']
-                        paper.arxiv_url = paper_info.get('arxiv_url', f"https://arxiv.org/abs/{paper_info['arxiv_id']}")
+                    if paper_info.get("arxiv_id"):
+                        paper.arxiv_id = paper_info["arxiv_id"]
+                        paper.arxiv_url = paper_info.get(
+                            "arxiv_url", f"https://arxiv.org/abs/{paper_info['arxiv_id']}"
+                        )
                         # 设置 PDF URL 以便下载
                         paper.pdf_url = f"https://arxiv.org/pdf/{paper_info['arxiv_id']}.pdf"
                         arxiv_found_count += 1

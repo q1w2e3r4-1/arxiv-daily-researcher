@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 class NormalizationResult(BaseModel):
     """标准化结果"""
+
     canonical_form: str
     original_keywords: List[str]
     category: Optional[str] = None
@@ -26,7 +27,7 @@ def _extract_json(text: str) -> str:
     """从 LLM 响应中提取 JSON 内容，去除 markdown 代码块包裹"""
     text = text.strip()
     # 匹配 ```json ... ``` 或 ``` ... ``` 包裹的内容
-    match = re.search(r'```(?:json)?\s*\n?(.*?)```', text, re.DOTALL)
+    match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
     if match:
         return match.group(1).strip()
     return text
@@ -45,9 +46,9 @@ class KeywordNormalizer:
     def __init__(self):
         """初始化，使用 settings 中的 cheap_llm 配置"""
         from config import settings
+
         self.client = OpenAI(
-            api_key=settings.CHEAP_LLM.api_key,
-            base_url=settings.CHEAP_LLM.base_url
+            api_key=settings.CHEAP_LLM.api_key, base_url=settings.CHEAP_LLM.base_url
         )
         self.model = settings.CHEAP_LLM.model_name
 
@@ -55,7 +56,7 @@ class KeywordNormalizer:
         self,
         keywords: List[str],
         existing_canonical: Optional[List[str]] = None,
-        batch_size: int = 25
+        batch_size: int = 25,
     ) -> List[NormalizationResult]:
         """
         批量标准化关键词
@@ -75,7 +76,7 @@ class KeywordNormalizer:
 
         # 分批处理
         for i in range(0, len(keywords), batch_size):
-            batch = keywords[i:i + batch_size]
+            batch = keywords[i : i + batch_size]
             try:
                 results = self._normalize_single_batch(batch, existing_canonical)
                 all_results.extend(results)
@@ -83,18 +84,16 @@ class KeywordNormalizer:
                 logger.error(f"标准化批次失败: {e}")
                 # 失败时，每个关键词作为独立的标准形式
                 for kw in batch:
-                    all_results.append(NormalizationResult(
-                        canonical_form=kw,
-                        original_keywords=[kw],
-                        confidence=0.5
-                    ))
+                    all_results.append(
+                        NormalizationResult(
+                            canonical_form=kw, original_keywords=[kw], confidence=0.5
+                        )
+                    )
 
         return all_results
 
     def _normalize_single_batch(
-        self,
-        keywords: List[str],
-        existing_canonical: Optional[List[str]] = None
+        self, keywords: List[str], existing_canonical: Optional[List[str]] = None
     ) -> List[NormalizationResult]:
         """处理单个批次"""
         prompt = self._build_prompt(keywords, existing_canonical)
@@ -103,11 +102,14 @@ class KeywordNormalizer:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是学术关键词标准化专家。请严格按照JSON格式输出。"},
-                    {"role": "user", "content": prompt}
+                    {
+                        "role": "system",
+                        "content": "你是学术关键词标准化专家。请严格按照JSON格式输出。",
+                    },
+                    {"role": "user", "content": prompt},
                 ],
                 temperature=0.3,
-                response_format={"type": "json_object"}
+                response_format={"type": "json_object"},
             )
 
             content = response.choices[0].message.content
@@ -139,26 +141,25 @@ class KeywordNormalizer:
                 raise ValueError("返回的normalizations为空")
 
             for norm in normalizations:
-                results.append(NormalizationResult(
-                    canonical_form=norm.get("canonical_form", "").lower(),
-                    original_keywords=[kw.lower() for kw in norm.get("original_keywords", [])],
-                    category=norm.get("category"),
-                    confidence=norm.get("confidence", 0.9)
-                ))
+                results.append(
+                    NormalizationResult(
+                        canonical_form=norm.get("canonical_form", "").lower(),
+                        original_keywords=[kw.lower() for kw in norm.get("original_keywords", [])],
+                        category=norm.get("category"),
+                        confidence=norm.get("confidence", 0.9),
+                    )
+                )
 
             return results
 
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON 解析失败: {e}")
+        except json.JSONDecodeError:
             raise
         except Exception as e:
             logger.error(f"LLM 调用失败: {e}")
             raise
 
     def _build_prompt(
-        self,
-        keywords: List[str],
-        existing_canonical: Optional[List[str]] = None
+        self, keywords: List[str], existing_canonical: Optional[List[str]] = None
     ) -> str:
         """构建标准化提示"""
         existing_str = ""

@@ -5,12 +5,14 @@
 - ArxivSource: ArXiv预印本数据源（支持PDF下载）
 - OpenAlexSource: OpenAlex期刊数据源（元数据 + 摘要）
 - SemanticScholarEnricher: Semantic Scholar数据增强器（TLDR + arXiv链接）
+- SearchAgent: 多源论文抓取编排
 """
 
 from .base_source import BasePaperSource, PaperMetadata
 from .arxiv_source import ArxivSource
 from .openalex_source import OpenAlexSource
 from .semantic_scholar_enricher import SemanticScholarEnricher
+from .search_agent import SearchAgent
 
 __all__ = [
     "BasePaperSource",
@@ -18,4 +20,5 @@ __all__ = [
     "ArxivSource",
     "OpenAlexSource",
     "SemanticScholarEnricher",
+    "SearchAgent",
 ]

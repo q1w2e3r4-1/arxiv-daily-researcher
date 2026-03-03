@@ -1,5 +1,7 @@
 import json
 import logging
+import hashlib
+import threading
 import requests
 import fitz  # pymupdf
 from typing import Optional, Dict, Any, List
@@ -9,13 +11,14 @@ from pydantic import BaseModel, ValidationError
 from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
 from config import settings
-from agents.mineru_parser import MineruParser
+from parsers.mineru_parser import MineruParser
 
 logger = logging.getLogger(__name__)
 
 # ======================================================================
 # Pydantic数据模型：用于验证和结构化LLM输出
 # ======================================================================
+
 
 class WeightedScoreResponse(BaseModel):
     """
@@ -32,6 +35,7 @@ class WeightedScoreResponse(BaseModel):
         tldr (str): 一句话总结论文的研究问题和结果
         extracted_keywords (List[str]): 从标题和摘要中提取的关键词
     """
+
     total_score: float
     keyword_scores: Dict[str, float]
     author_bonus: float
@@ -42,12 +46,14 @@ class WeightedScoreResponse(BaseModel):
     tldr: str
     extracted_keywords: List[str]
 
+
 class Stage2Response(BaseModel):
     """
     深度分析响应模型（可配置字段）。
 
     属性根据 settings.ENABLED_ANALYSIS_FIELDS 动态使用。
     """
+
     chinese_title: Optional[str] = None
     summary: Optional[str] = None
     innovations: Optional[List[str]] = None
@@ -60,6 +66,7 @@ class Stage2Response(BaseModel):
     future_work: Optional[str] = None
     custom_answers: Optional[Dict[str, str]] = None
 
+
 class AnalysisAgent:
     """
     论文分析Agent（新策略：加权评分系统）。
@@ -70,15 +77,14 @@ class AnalysisAgent:
     - 计算动态及格分并判断是否合格
     - 对及格论文进行深度分析（使用可配置模板）
     """
+
     def __init__(self):
         # 初始化两个不同性能LLM客户端
         self.cheap_client = OpenAI(
-            api_key=settings.CHEAP_LLM.api_key,
-            base_url=settings.CHEAP_LLM.base_url
+            api_key=settings.CHEAP_LLM.api_key, base_url=settings.CHEAP_LLM.base_url
         )
         self.smart_client = OpenAI(
-            api_key=settings.SMART_LLM.api_key,
-            base_url=settings.SMART_LLM.base_url
+            api_key=settings.SMART_LLM.api_key, base_url=settings.SMART_LLM.base_url
         )
 
         # 初始化 MinerU PDF 解析器
@@ -94,6 +100,7 @@ class AnalysisAgent:
 
     def _call_cheap_llm(self, prompt: str) -> str:
         """调用低成本LLM（JSON模式），带自动重试。"""
+
         @retry(
             stop=stop_after_attempt(settings.RETRY_MAX_ATTEMPTS),
             wait=wait_exponential(min=settings.RETRY_MIN_WAIT, max=settings.RETRY_MAX_WAIT),
@@ -113,6 +120,7 @@ class AnalysisAgent:
 
     def _call_cheap_llm_plain(self, prompt: str) -> str:
         """调用低成本LLM（纯文本模式），带自动重试。"""
+
         @retry(
             stop=stop_after_attempt(settings.RETRY_MAX_ATTEMPTS),
             wait=wait_exponential(min=settings.RETRY_MIN_WAIT, max=settings.RETRY_MAX_WAIT),
@@ -131,6 +139,7 @@ class AnalysisAgent:
 
     def _call_smart_llm(self, prompt: str) -> str:
         """调用高性能LLM（JSON模式），带自动重试。"""
+
         @retry(
             stop=stop_after_attempt(settings.RETRY_MAX_ATTEMPTS),
             wait=wait_exponential(min=settings.RETRY_MIN_WAIT, max=settings.RETRY_MAX_WAIT),
@@ -150,6 +159,7 @@ class AnalysisAgent:
 
     def _download_pdf_bytes(self, pdf_url: str) -> bytes:
         """下载PDF内容，带自动重试。"""
+
         @retry(
             stop=stop_after_attempt(settings.RETRY_MAX_ATTEMPTS),
             wait=wait_exponential(min=settings.RETRY_MIN_WAIT, max=settings.RETRY_MAX_WAIT),
@@ -188,23 +198,23 @@ class AnalysisAgent:
             result = ""
             i = 0
             while i < len(content):
-                if content[i] == '\\':
+                if content[i] == "\\":
                     if i + 1 < len(content):
                         next_char = content[i + 1]
                         # 合法的转义字符
-                        if next_char in ['"', '\\', '/', 'b', 'f', 'n', 'r', 't']:
-                            result += content[i:i+2]
+                        if next_char in ['"', "\\", "/", "b", "f", "n", "r", "t"]:
+                            result += content[i : i + 2]
                             i += 2
                         # Unicode转义
-                        elif next_char == 'u' and i + 5 < len(content):
-                            result += content[i:i+6]
+                        elif next_char == "u" and i + 5 < len(content):
+                            result += content[i : i + 6]
                             i += 6
                         # 非法转义，转义反斜杠本身
                         else:
-                            result += '\\\\'
+                            result += "\\\\"
                             i += 1
                     else:
-                        result += '\\\\'
+                        result += "\\\\"
                         i += 1
                 else:
                     result += content[i]
@@ -212,7 +222,7 @@ class AnalysisAgent:
             return f'"{result}"'
 
         # 匹配JSON字符串值（简化版，不处理嵌套）
-        json_str = re.sub(r'"((?:[^"\\]|\\.)*)\"', fix_escapes_in_match, json_str)
+        json_str = re.sub(r'"((?:[^"\\]|\\.)*)"', fix_escapes_in_match, json_str)
 
         return json_str
 
@@ -221,11 +231,7 @@ class AnalysisAgent:
     # ======================================================================
 
     def score_paper_with_keywords(
-        self,
-        title: str,
-        authors: str,
-        abstract: str,
-        keywords_dict: Dict[str, float]
+        self, title: str, authors: str, abstract: str, keywords_dict: Dict[str, float]
     ) -> WeightedScoreResponse:
         """
         使用加权关键词系统对论文进行评分。
@@ -247,10 +253,9 @@ class AnalysisAgent:
         passing_score = settings.calculate_passing_score(total_weight)
 
         # 构建关键词列表字符串
-        keywords_list = "\n".join([
-            f"  - {kw} (权重: {weight:.1f})"
-            for kw, weight in keywords_dict.items()
-        ])
+        keywords_list = "\n".join(
+            [f"  - {kw} (权重: {weight:.1f})" for kw, weight in keywords_dict.items()]
+        )
 
         # 构建专家作者列表字符串
         expert_authors_str = ", ".join(settings.EXPERT_AUTHORS) if settings.EXPERT_AUTHORS else "无"
@@ -322,8 +327,7 @@ class AnalysisAgent:
 
             # 计算加权总分
             weighted_score = sum(
-                keyword_scores.get(kw, 0) * weight
-                for kw, weight in keywords_dict.items()
+                keyword_scores.get(kw, 0) * weight for kw, weight in keywords_dict.items()
             )
 
             # 计算作者附加分
@@ -337,7 +341,9 @@ class AnalysisAgent:
             # 判断是否及格
             is_qualified = total_score >= passing_score
 
-            logger.info(f"论文评分完成: 总分={total_score:.1f}, 及格分={passing_score:.1f}, {'✅及格' if is_qualified else '❌未及格'}")
+            logger.info(
+                f"论文评分完成: 总分={total_score:.1f}, 及格分={passing_score:.1f}, {'✅及格' if is_qualified else '❌未及格'}"
+            )
 
             return WeightedScoreResponse(
                 total_score=total_score,
@@ -348,12 +354,13 @@ class AnalysisAgent:
                 is_qualified=is_qualified,
                 reasoning=reasoning,
                 tldr=tldr,
-                extracted_keywords=extracted_keywords
+                extracted_keywords=extracted_keywords,
             )
 
         except Exception as e:
             logger.error(f"论文评分失败: {e}")
             import traceback
+
             traceback.print_exc()
 
             # 返回默认低分
@@ -366,7 +373,7 @@ class AnalysisAgent:
                 is_qualified=False,
                 reasoning=f"评分失败: {str(e)}",
                 tldr="评分失败，无法生成摘要",
-                extracted_keywords=[]
+                extracted_keywords=[],
             )
 
     # ======================================================================
@@ -407,11 +414,7 @@ class AnalysisAgent:
     # ======================================================================
 
     def deep_analyze(
-        self,
-        title: str,
-        pdf_url: str,
-        abstract: str,
-        fallback_to_abstract: bool = True
+        self, title: str, pdf_url: str, abstract: str, fallback_to_abstract: bool = True
     ) -> Optional[Dict[str, Any]]:
         """
         对论文进行深度分析（使用新的模板系统）。
@@ -437,39 +440,41 @@ class AnalysisAgent:
                 return None
 
         # 从新模板获取配置
-        modules = self.deep_template.get('modules', [])
-        prompts_config = self.deep_template.get('prompts', {})
+        modules = self.deep_template.get("modules", [])
+        prompts_config = self.deep_template.get("prompts", {})
 
         # 获取启用的模块
-        enabled_modules = [m for m in modules if m.get('enabled', True)]
+        enabled_modules = [m for m in modules if m.get("enabled", True)]
 
         # 构建字段提示词字符串
         field_prompts_lines = []
         output_fields = []
 
         for module in enabled_modules:
-            module_id = module.get('id')
-            module_prompt = module.get('prompt', '')
+            module_id = module.get("id")
+            module_prompt = module.get("prompt", "")
 
-            if module_id == 'custom_questions':
+            if module_id == "custom_questions":
                 # 处理自定义问题
-                questions = module.get('questions', [])
+                questions = module.get("questions", [])
                 if questions:
                     field_prompts_lines.append(f"\n自定义问题:")
                     for i, q in enumerate(questions, 1):
                         field_prompts_lines.append(f"{i}. {q}")
-                    output_fields.append(f"  \"custom_answers\": {{\"问题1\": \"回答1\", \"问题2\": \"回答2\", ...}}")
+                    output_fields.append(
+                        f'  "custom_answers": {{"问题1": "回答1", "问题2": "回答2", ...}}'
+                    )
             else:
                 # 普通模块
                 field_prompts_lines.append(f"\n{module_id}: {module_prompt}")
-                output_fields.append(f"  \"{module_id}\": \"...\"")
+                output_fields.append(f'  "{module_id}": "..."')
 
         fields_str = ",\n".join(output_fields)
         field_prompts_str = "\n".join(field_prompts_lines)
 
         # 使用模板中的系统提示词和用户提示词模板
-        system_prompt = prompts_config.get('analysis_system', '你是一名学术论文分析专家。')
-        analysis_template = prompts_config.get('analysis_template', '')
+        system_prompt = prompts_config.get("analysis_system", "你是一名学术论文分析专家。")
+        analysis_template = prompts_config.get("analysis_template", "")
 
         # 构建最终prompt
         if analysis_template:
@@ -477,8 +482,10 @@ class AnalysisAgent:
             prompt = analysis_template.format(
                 title=title,
                 content=pdf_text[:15000],
-                research_context=settings.RESEARCH_CONTEXT if settings.RESEARCH_CONTEXT else "通用学术研究",
-                field_prompts=field_prompts_str
+                research_context=(
+                    settings.RESEARCH_CONTEXT if settings.RESEARCH_CONTEXT else "通用学术研究"
+                ),
+                field_prompts=field_prompts_str,
             )
         else:
             # 备用格式
@@ -519,6 +526,7 @@ class AnalysisAgent:
         except Exception as e:
             logger.error(f"深度分析失败: {e}")
             import traceback
+
             traceback.print_exc()
             return None
 
@@ -582,8 +590,11 @@ class AnalysisAgent:
             pdf_bytes = self._download_pdf_bytes(pdf_url)
 
             # 保存到临时文件
-            temp_pdf = settings.DOWNLOAD_DIR / f"temp_{hash(pdf_url)}.pdf"
-            with open(temp_pdf, 'wb') as f:
+            temp_pdf = (
+                settings.DOWNLOAD_DIR
+                / f"temp_{hashlib.md5(pdf_url.encode()).hexdigest()[:16]}_{threading.get_ident()}.pdf"
+            )
+            with open(temp_pdf, "wb") as f:
                 f.write(pdf_bytes)
 
             # 解析PDF（前20页），使用 try/finally 确保资源释放和临时文件清理

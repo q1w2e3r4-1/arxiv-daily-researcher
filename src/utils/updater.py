@@ -18,6 +18,7 @@ def check_and_update(logger=None) -> bool:
     返回:
         bool: True 表示已更新或已是最新，False 表示检查失败
     """
+
     def log(msg, level="info"):
         if logger:
             getattr(logger, level)(msg)
@@ -35,7 +36,10 @@ def check_and_update(logger=None) -> bool:
         # 获取当前分支
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=project_root, capture_output=True, text=True, timeout=10
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         branch = result.stdout.strip() or "main"
 
@@ -43,7 +47,10 @@ def check_and_update(logger=None) -> bool:
         log("正在检查更新...")
         fetch_result = subprocess.run(
             ["git", "fetch", "origin", branch],
-            cwd=project_root, capture_output=True, text=True, timeout=30
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if fetch_result.returncode != 0:
             log(f"获取远程更新失败: {fetch_result.stderr.strip()}", "warning")
@@ -52,8 +59,14 @@ def check_and_update(logger=None) -> bool:
         # 比较本地和远程的提交
         result = subprocess.run(
             ["git", "rev-list", f"HEAD..origin/{branch}", "--count"],
-            cwd=project_root, capture_output=True, text=True, timeout=10
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
+        if result.returncode != 0:
+            log(f"比较提交失败: {result.stderr.strip()}", "warning")
+            return False
         behind_count = int(result.stdout.strip())
 
         if behind_count == 0:
@@ -65,7 +78,10 @@ def check_and_update(logger=None) -> bool:
         # 检查是否有未提交的修改
         status_result = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=project_root, capture_output=True, text=True, timeout=10
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         has_changes = bool(status_result.stdout.strip())
 
@@ -74,13 +90,19 @@ def check_and_update(logger=None) -> bool:
             log("检测到本地修改，暂存中...")
             subprocess.run(
                 ["git", "stash", "push", "-m", "auto-update-stash"],
-                cwd=project_root, capture_output=True, text=True, timeout=10
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
 
         # 拉取最新代码
         pull_result = subprocess.run(
             ["git", "pull", "origin", branch],
-            cwd=project_root, capture_output=True, text=True, timeout=60
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
 
         if pull_result.returncode != 0:
@@ -88,7 +110,10 @@ def check_and_update(logger=None) -> bool:
             if has_changes:
                 subprocess.run(
                     ["git", "stash", "pop"],
-                    cwd=project_root, capture_output=True, text=True, timeout=10
+                    cwd=project_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
                 )
             return False
 
@@ -96,7 +121,10 @@ def check_and_update(logger=None) -> bool:
             # 恢复本地修改
             pop_result = subprocess.run(
                 ["git", "stash", "pop"],
-                cwd=project_root, capture_output=True, text=True, timeout=10
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if pop_result.returncode != 0:
                 log("恢复本地修改时出现冲突，请手动解决", "warning")

@@ -9,9 +9,4 @@ from .database import KeywordDatabase
 from .normalizer import KeywordNormalizer
 from .mermaid_generator import MermaidGenerator
 
-__all__ = [
-    "KeywordTracker",
-    "KeywordDatabase",
-    "KeywordNormalizer",
-    "MermaidGenerator"
-]
+__all__ = ["KeywordTracker", "KeywordDatabase", "KeywordNormalizer", "MermaidGenerator"]

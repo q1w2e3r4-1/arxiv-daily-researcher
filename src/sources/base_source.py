@@ -24,20 +24,21 @@ class PaperMetadata:
     所有数据源返回的论文都使用这个统一格式，
     便于后续的评分、分析和报告生成。
     """
-    paper_id: str                          # 唯一标识符（ArXiv ID 或 DOI）
-    title: str                             # 论文标题
-    authors: List[str]                     # 作者列表
-    abstract: str                          # 摘要
-    published_date: datetime               # 发布日期
-    url: str                               # 论文页面URL
-    source: str                            # 数据源标识（如 "arxiv", "prl", "pra"）
-    pdf_url: Optional[str] = None          # PDF下载链接（如果可用）
-    doi: Optional[str] = None              # DOI
-    journal: Optional[str] = None          # 期刊名称
+
+    paper_id: str  # 唯一标识符（ArXiv ID 或 DOI）
+    title: str  # 论文标题
+    authors: List[str]  # 作者列表
+    abstract: str  # 摘要
+    published_date: datetime  # 发布日期
+    url: str  # 论文页面URL
+    source: str  # 数据源标识（如 "arxiv", "prl", "pra"）
+    pdf_url: Optional[str] = None  # PDF下载链接（如果可用）
+    doi: Optional[str] = None  # DOI
+    journal: Optional[str] = None  # 期刊名称
     categories: List[str] = field(default_factory=list)  # 分类/领域
     semantic_scholar_tldr: Optional[str] = None  # Semantic Scholar AI生成的TLDR
-    arxiv_id: Optional[str] = None         # arXiv ID（期刊论文可能也有arXiv版本）
-    arxiv_url: Optional[str] = None        # arXiv论文页面URL
+    arxiv_id: Optional[str] = None  # arXiv ID（期刊论文可能也有arXiv版本）
+    arxiv_url: Optional[str] = None  # arXiv论文页面URL
 
     def has_pdf_access(self) -> bool:
         """是否可以下载PDF进行深度分析"""
@@ -138,8 +139,9 @@ class BasePaperSource(ABC):
         pass
 
     def is_processed(self, paper_id: str) -> bool:
-        """检查论文是否已处理过"""
-        return paper_id in self.history
+        """检查论文是否已处理过（线程安全）"""
+        with self._history_lock:
+            return paper_id in self.history
 
     def mark_as_processed(self, paper_id: str):
         """标记论文为已处理（线程安全）"""
@@ -151,7 +153,7 @@ class BasePaperSource(ABC):
         """从文件加载历史记录"""
         if self.history_file.exists():
             try:
-                with open(self.history_file, 'r', encoding='utf-8') as f:
+                with open(self.history_file, "r", encoding="utf-8") as f:
                     self.history = json.load(f)
                 logger.debug(f"[{self.source_name}] 加载历史记录: {len(self.history)} 条")
             except Exception as e:
@@ -164,7 +166,7 @@ class BasePaperSource(ABC):
         """保存历史记录到文件"""
         try:
             self.history_dir.mkdir(parents=True, exist_ok=True)
-            with open(self.history_file, 'w', encoding='utf-8') as f:
+            with open(self.history_file, "w", encoding="utf-8") as f:
                 json.dump(self.history, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[{self.source_name}] 保存历史记录失败: {e}")
@@ -174,7 +176,8 @@ class BasePaperSource(ABC):
         return len(self.history)
 
     def clear_history(self):
-        """清空历史记录"""
-        self.history = {}
-        self._save_history()
+        """清空历史记录（线程安全）"""
+        with self._history_lock:
+            self.history = {}
+            self._save_history()
         logger.info(f"[{self.source_name}] 历史记录已清空")

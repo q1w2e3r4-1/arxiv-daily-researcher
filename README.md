@@ -367,14 +367,14 @@ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/xxx
 
 通知消息通过 `configs/notification_templates/` 目录下的 Markdown 模板渲染，开箱即用，也可自行修改：
 
-| 模板文件            | 用途                     | 触发条件                           |
-| :------------------ | :----------------------- | :--------------------------------- |
-| `success.md`        | 运行成功通知             | 每次成功运行后                     |
-| `failure.md`        | 运行失败通知             | 主流程异常退出                     |
-| `error_mineru.md`   | MinerU API 错误告警      | Token 过期、额度耗尽、网络异常     |
-| `error_llm.md`      | LLM API 错误告警         | API Key 失效、余额不足等           |
-| `error_network.md`  | 外部服务连接错误告警     | ArXiv/OpenAlex 等服务连接失败      |
-| `error_generic.md`  | 通用错误告警             | 其他未分类的运行时错误             |
+| 模板文件           | 用途                 | 触发条件                       |
+| :----------------- | :------------------- | :----------------------------- |
+| `success.md`       | 运行成功通知         | 每次成功运行后                 |
+| `failure.md`       | 运行失败通知         | 主流程异常退出                 |
+| `error_mineru.md`  | MinerU API 错误告警  | Token 过期、额度耗尽、网络异常 |
+| `error_llm.md`     | LLM API 错误告警     | API Key 失效、余额不足等       |
+| `error_network.md` | 外部服务连接错误告警 | ArXiv/OpenAlex 等服务连接失败  |
+| `error_generic.md` | 通用错误告警         | 其他未分类的运行时错误         |
 
 模板中以 `# ` 开头的行为注释（不会发送），使用 `{变量名}` 引用动态数据。每个模板文件顶部有完整的可用变量列表和说明。
 
@@ -535,24 +535,30 @@ arxiv-daily-researcher/
 │
 ├── 📂 src/                         # 源代码
 │   ├── ⚙️  config.py               # 全局配置管理（Pydantic）
-│   └── 🤖 agents/
-│       ├── search_agent.py         # 多源论文抓取编排
-│       ├── analysis_agent.py       # LLM 评分 + 深度分析
-│       ├── keyword_agent.py        # 从参考 PDF 提取关键词
-│       ├── reporter.py             # Markdown / HTML 报告生成
-│       ├── notifier.py             # 多渠道通知推送
-│       ├── mineru_parser.py        # MinerU 云端 PDF 解析
-│       ├── 📂 keyword_tracker/     # 关键词趋势追踪子系统
-│       │   ├── database.py         # SQLite 操作
-│       │   ├── tracker.py          # 追踪器入口
-│       │   ├── normalizer.py       # AI 关键词标准化
-│       │   └── mermaid_generator.py
-│       ├── 📂 report_modules/      # 模块化报告渲染器
-│       └── 📂 sources/             # 数据源适配器
-│           ├── base_source.py      # 抽象基类 + PaperMetadata
-│           ├── arxiv_source.py
-│           ├── openalex_source.py
-│           └── semantic_scholar_enricher.py
+│   ├── 🤖 agents/                  # LLM Agent（仅调用 LLM 的模块）
+│   │   ├── analysis_agent.py       # LLM 评分 + 深度分析
+│   │   └── keyword_agent.py        # 从参考 PDF 提取关键词
+│   ├── 📡 sources/                 # 数据源适配器 + 搜索编排
+│   │   ├── search_agent.py         # 多源论文抓取编排
+│   │   ├── base_source.py          # 抽象基类 + PaperMetadata
+│   │   ├── arxiv_source.py
+│   │   ├── openalex_source.py
+│   │   └── semantic_scholar_enricher.py
+│   ├── 📄 report/                  # 报告生成
+│   │   ├── reporter.py             # Markdown / HTML 报告生成
+│   │   └── 📂 modules/            # 模块化报告渲染器
+│   ├── 🔔 notifications/          # 多渠道通知推送
+│   │   └── notifier.py
+│   ├── 📑 parsers/                 # PDF 解析
+│   │   └── mineru_parser.py        # MinerU 云端 PDF 解析
+│   ├── 📈 keyword_tracker/         # 关键词趋势追踪子系统
+│   │   ├── tracker.py              # 追踪器入口
+│   │   ├── database.py             # SQLite 操作
+│   │   ├── normalizer.py           # AI 关键词标准化
+│   │   └── mermaid_generator.py
+│   └── 🛠️  utils/                  # 工具模块
+│       ├── logger.py               # 日志管理
+│       └── updater.py              # 自动更新
 │
 ├── ⚙️  configs/
 │   ├── config.json                 # 项目主配置（JSON5，可写注释）
@@ -612,7 +618,7 @@ arxiv-daily-researcher/
 | `njp`                                        | New Journal of Physics                          |
 
 > [!NOTE]
-> 完整 ISSN 映射见 `src/agents/sources/openalex_source.py`。
+> 完整 ISSN 映射见 `src/sources/openalex_source.py`。
 > 如需添加新期刊，请参考[常见问题 · 如何添加未列出的学术期刊](#-如何添加当前列表中没有的学术期刊)。
 
 ---
@@ -950,7 +956,7 @@ rm -rf data/history/
 <details>
 <summary><b>📚 如何添加当前列表中没有的学术期刊？</b></summary>
 
-编辑 `src/agents/sources/openalex_source.py`，在 `JOURNAL_ISSN_MAP` 中添加新条目：
+编辑 `src/sources/openalex_source.py`，在 `JOURNAL_ISSN_MAP` 中添加新条目：
 
 ```python
 JOURNAL_ISSN_MAP = {
@@ -1012,32 +1018,69 @@ AI 标准化偶尔可能出现过度归并。处理方式：
 
 本项目采用 [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html) 许可证。
 
-| 权限       | 说明                                       |
-| :--------- | :----------------------------------------- |
-| ✅ 使用     | 可自由使用、修改、分发                     |
-| ✅ 商用     | 允许商业使用                               |
-| 📋 源码公开 | 修改后的版本须公开源代码并使用相同许可证   |
-| 🌐 网络使用 | 通过网络提供服务时也须公开源代码           |
-| 📝 声明     | 需保留原始版权声明和许可证                 |
+| 权限       | 说明                                     |
+| :--------- | :--------------------------------------- |
+| ✅ 使用     | 可自由使用、修改、分发                   |
+| ✅ 商用     | 允许商业使用                             |
+| 📋 源码公开 | 修改后的版本须公开源代码并使用相同许可证 |
+| 🌐 网络使用 | 通过网络提供服务时也须公开源代码         |
+| 📝 声明     | 需保留原始版权声明和许可证               |
 
 ---
 
 ## 📝 更新日志
 
+### ✅ v2.2 — 2026-03-03
+
+<details>
+<summary><b>📦 源代码结构重构（1 项）</b></summary>
+
+1. **按功能模块拆分 `src/agents/` 目录** — 原 `agents/` 中混合了 LLM Agent 和非 LLM 功能代码，现按职责拆分为独立模块：`agents/`（仅 LLM Agent）、`sources/`（数据源 + 搜索编排）、`report/`（报告生成 + 渲染器）、`notifications/`（通知推送）、`parsers/`（PDF 解析）、`keyword_tracker/`（关键词追踪），所有导入路径同步更新
+
+</details>
+
+<details>
+<summary><b>🐛 Bug 修复（4 项关键修复 + 7 项中等修复）</b></summary>
+
+2. **修复 JSON 转义修复器正则表达式失效** — `_clean_json_string` 中的正则终止符 `\"` 导致仅匹配以转义引号结尾的字符串值，LLM 返回含 LaTeX 反斜杠的 JSON 时无法修复，静默降级到错误默认值（`analysis_agent.py`）
+3. **修复并发模式下历史记录读取的竞态条件** — `is_processed()` 未加锁读取共享字典，并发时可能导致同一论文被重复评分和分析（`base_source.py`）
+4. **修复并发模式下 SQLite "database is locked" 错误** — 启用 WAL 日志模式和 30 秒超时，避免多线程同时写入关键词数据库时锁冲突丢失数据（`database.py`）
+5. **修复并发模式下临时 PDF 文件名冲突** — 使用 MD5 哈希 + 线程 ID 生成唯一临时文件名，避免多线程下载同一 PDF 时相互覆盖（`analysis_agent.py`）
+6. **修复 PDF 文件句柄泄漏** — `_extract_text_from_pdf` 使用 `with` 上下文管理器确保异常时也能正确关闭 PyMuPDF 文档（`keyword_agent.py`）
+7. **修复 OpenAlex 分页数日志 Off-by-one** — 页码计数器提前自增导致日志报告的页数始终比实际多 1（`openalex_source.py`）
+8. **修复合成 DOI 生成无效 URL** — OpenAlex 中无真实 DOI 的论文（`openalex:W12345` 格式）不再生成无效的 `doi.org` 链接，改用 OpenAlex 页面 URL（`openalex_source.py`）
+9. **修复关键词缓存目录未创建导致保存静默失败** — 在保存缓存前自动创建 `data/keywords/` 目录，避免首次运行时提取的参考关键词丢失（`keyword_agent.py`）
+10. **修复 `INSERT OR IGNORE` 后 `lastrowid` 不可靠** — 改用 `cursor.rowcount > 0` 判断是否实际插入成功，避免重复记录（`database.py`）
+11. **修复参考 PDF 关键词分配逻辑** — 超过 5 个新 PDF 时，未分析的 PDF 不再被错误分配相同的关键词（`keyword_agent.py`）
+12. **修复 `git rev-list` 返回码未检查** — 命令失败时不再因解析空输出触发 `ValueError`（`updater.py`）
+
+</details>
+
+---
+
 ### ✅ v2.1 — 2026-03-03
 
-**📋 许可证变更（1 项）**
+<details>
+<summary><b>📋 许可证变更（1 项）</b></summary>
 
 1. **许可证从 CC BY-NC-SA 4.0 变更为 AGPL-3.0** — 更适合开源软件项目的许可协议，允许商业使用，要求衍生作品公开源代码
 
-**✨ 新功能（2 项）**
+</details>
+
+<details>
+<summary><b>✨ 新功能（2 项）</b></summary>
 
 2. **通知消息 Markdown 模板系统** — 通知消息改用可自定义的 Markdown 模板渲染，适配企业微信等支持 Markdown 的平台。模板文件存放于 `configs/notification_templates/`，包含运行成功（`success.md`）、运行失败（`failure.md`）及多种错误告警模板，用户可直接修改模板自定义通知样式和内容
 3. **运行时错误实时告警通知** — 新增错误告警通知机制，当 MinerU API Token 过期、额度耗尽、LLM API 异常、网络连接失败等错误发生时，立即通过配置的通知渠道推送告警，包含错误详情和处理建议（模板文件：`error_mineru.md`、`error_llm.md`、`error_network.md`、`error_generic.md`）
 
-**🗑️ 清理（1 项）**
+</details>
+
+<details>
+<summary><b>🗑️ 清理（1 项）</b></summary>
 
 4. **移除临时文档** — 删除不再需要的 `mineruapi.md` 文件
+
+</details>
 
 ---
 
@@ -1087,46 +1130,62 @@ AI 标准化偶尔可能出现过度归并。处理方式：
 
 ### ✅ v1.3 — 2026-03-01
 
-**🐛 Bug 修复（3 项）**
+<details>
+<summary><b>🐛 Bug 修复（3 项）</b></summary>
 
 1. **修复 OpenAlex 数据源每页只处理最后一篇论文的严重 Bug** — `for item in results:` 循环中去重、标题/作者/摘要提取等逻辑缩进错误，导致每页只有最后一篇被处理，大量论文被静默跳过
 2. **修复关键词标准化 JSON 解析失败** — LLM 将 JSON 包裹在 Markdown 代码块中返回时直接报错。在 `normalizer.py` 新增 `_extract_json()` 自动剥离代码块；`keyword_agent.py` 同步修复，补充无语言标注代码块的处理
 3. **修复关键词标准化 JSON 截断问题** — `batch_size=50` 时 LLM 输出易超 token 上限导致 JSON 不完整。将默认值从 50 改为 25，同步更新四处配置
 
+</details>
+
 ---
 
 ### ✅ v1.2 — 2026-02-08
 
-**🐛 重要修复（1 项）**
+<details>
+<summary><b>🐛 重要修复（1 项）</b></summary>
 
 1. **修复 OpenAlex 源缩进错误** — 标题、作者、摘要提取代码无法执行（此问题后在 v1.3 中被更全面修复）
 
-**⚡ 性能优化（2 项）**
+</details>
+
+<details>
+<summary><b>⚡ 性能优化（2 项）</b></summary>
 
 2. **翻译缓存机制** — 新增 MD5 哈希缓存，同一摘要（ArXiv 与期刊重复时）只翻译一次
 3. **KeywordTracker 实例优化** — 移到处理循环外初始化，减少数据库连接开销
 
-**✨ 功能增强（2 项）**
+</details>
+
+<details>
+<summary><b>✨ 功能增强（2 项）</b></summary>
 
 4. **ArXiv 优先策略** — 期刊论文有 ArXiv 版本时自动切换，获取完整元数据
 5. **增强 Semantic Scholar 集成** — 改进 ArXiv 版本检测逻辑，同时获取 TLDR
+
+</details>
 
 ---
 
 ### ✅ v1.1 — 2026-02-05
 
-**运行脚本增强（4 项）**
+<details>
+<summary><b>运行脚本增强（4 项）</b></summary>
 
 1. 新增虚拟环境自动检测与创建功能
 2. 新增 macOS 运行脚本（`run_daily_mac.sh`）
 3. 新增 Windows PowerShell 脚本（`run_daily.ps1`）
 4. 增强 Linux 运行脚本（`run_daily.sh`）
 
+</details>
+
 ---
 
 ### ✅ v1.0 — 2026-02-06
 
-**首次正式发布（6 项）**
+<details>
+<summary><b>首次正式发布（6 项）</b></summary>
 
 1. 多数据源支持（ArXiv + 20+ 学术期刊，基于 OpenAlex）
 2. 智能评分系统（关键词加权 + 动态及格线）
@@ -1134,6 +1193,8 @@ AI 标准化偶尔可能出现过度归并。处理方式：
 4. 关键词趋势追踪（SQLite 存储 + Mermaid 可视化）
 5. AI 关键词标准化（批量语义归并）
 6. Markdown 报告生成（按数据源分目录）
+
+</details>
 
 ---
 

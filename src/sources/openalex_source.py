@@ -25,90 +25,74 @@ JOURNAL_ISSN_MAP = {
     "prl": {
         "full_name": "Physical Review Letters",
         "issn": ["0031-9007", "1079-7114"],
-        "display_name": "PRL"
+        "display_name": "PRL",
     },
     "pra": {
         "full_name": "Physical Review A",
         "issn": ["2469-9926", "1050-2947"],
-        "display_name": "PRA"
+        "display_name": "PRA",
     },
     "prb": {
         "full_name": "Physical Review B",
         "issn": ["2469-9950", "1098-0121"],
-        "display_name": "PRB"
+        "display_name": "PRB",
     },
     "prc": {
         "full_name": "Physical Review C",
         "issn": ["2469-9985", "0556-2813"],
-        "display_name": "PRC"
+        "display_name": "PRC",
     },
     "prd": {
         "full_name": "Physical Review D",
         "issn": ["2470-0010", "1550-7998"],
-        "display_name": "PRD"
+        "display_name": "PRD",
     },
     "pre": {
         "full_name": "Physical Review E",
         "issn": ["2470-0045", "1539-3755"],
-        "display_name": "PRE"
+        "display_name": "PRE",
     },
-    "prx": {
-        "full_name": "Physical Review X",
-        "issn": ["2160-3308"],
-        "display_name": "PRX"
-    },
-    "prxq": {
-        "full_name": "PRX Quantum",
-        "issn": ["2691-3399"],
-        "display_name": "PRX Quantum"
-    },
+    "prx": {"full_name": "Physical Review X", "issn": ["2160-3308"], "display_name": "PRX"},
+    "prxq": {"full_name": "PRX Quantum", "issn": ["2691-3399"], "display_name": "PRX Quantum"},
     "rmp": {
         "full_name": "Reviews of Modern Physics",
         "issn": ["0034-6861", "1539-0756"],
-        "display_name": "RMP"
+        "display_name": "RMP",
     },
     # Nature 系列
-    "nature": {
-        "full_name": "Nature",
-        "issn": ["0028-0836", "1476-4687"],
-        "display_name": "Nature"
-    },
+    "nature": {"full_name": "Nature", "issn": ["0028-0836", "1476-4687"], "display_name": "Nature"},
     "nature_physics": {
         "full_name": "Nature Physics",
         "issn": ["1745-2473", "1745-2481"],
-        "display_name": "Nat. Phys."
+        "display_name": "Nat. Phys.",
     },
     "nature_communications": {
         "full_name": "Nature Communications",
         "issn": ["2041-1723"],
-        "display_name": "Nat. Commun."
+        "display_name": "Nat. Commun.",
     },
     # Science 系列
     "science": {
         "full_name": "Science",
         "issn": ["0036-8075", "1095-9203"],
-        "display_name": "Science"
+        "display_name": "Science",
     },
     "science_advances": {
         "full_name": "Science Advances",
         "issn": ["2375-2548"],
-        "display_name": "Sci. Adv."
+        "display_name": "Sci. Adv.",
     },
     # 其他重要期刊
     "npj_quantum_information": {
         "full_name": "npj Quantum Information",
         "issn": ["2056-6387"],
-        "display_name": "npj QI"
+        "display_name": "npj QI",
     },
-    "quantum": {
-        "full_name": "Quantum",
-        "issn": ["2521-327X"],
-        "display_name": "Quantum"
-    },
+    "quantum": {"full_name": "Quantum", "issn": ["2521-327X"], "display_name": "Quantum"},
     "new_journal_of_physics": {
         "full_name": "New Journal of Physics",
         "issn": ["1367-2630"],
-        "display_name": "NJP"
+        "display_name": "NJP",
     },
 }
 
@@ -132,7 +116,7 @@ class OpenAlexSource(BasePaperSource):
         journals: List[str] = None,
         max_results: int = 100,
         email: str = None,
-        api_key: str = None
+        api_key: str = None,
     ):
         """
         初始化 OpenAlex 数据源。
@@ -151,9 +135,11 @@ class OpenAlexSource(BasePaperSource):
         self.api_key = api_key
 
         self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": "ArxivDailyResearcher/2.0 (https://github.com/yzr278892/arxiv-daily-researcher; yzr278892@gmail.com)"
-        })
+        self.session.headers.update(
+            {
+                "User-Agent": "ArxivDailyResearcher/2.0 (https://github.com/yzr278892/arxiv-daily-researcher; yzr278892@gmail.com)"
+            }
+        )
 
     def __enter__(self):
         """支持上下文管理器"""
@@ -197,12 +183,7 @@ class OpenAlexSource(BasePaperSource):
         """获取期刊信息"""
         return JOURNAL_ISSN_MAP.get(journal_code.lower())
 
-    def fetch_papers(
-        self,
-        days: int,
-        journals: List[str] = None,
-        **kwargs
-    ) -> List[PaperMetadata]:
+    def fetch_papers(self, days: int, journals: List[str] = None, **kwargs) -> List[PaperMetadata]:
         """
         从 OpenAlex 抓取指定期刊最近 N 天的论文。
 
@@ -244,7 +225,7 @@ class OpenAlexSource(BasePaperSource):
                     issn_list=issn_list,
                     journal_code=journal_code,
                     journal_name=journal_name,
-                    from_date=from_date
+                    from_date=from_date,
                 )
                 all_papers.extend(papers)
                 logger.info(f"    {display_name}: 发现 {len(papers)} 篇新论文")
@@ -252,12 +233,15 @@ class OpenAlexSource(BasePaperSource):
             except Exception as e:
                 logger.error(f"    {display_name} 抓取失败: {e}")
                 import traceback
+
                 traceback.print_exc()
 
         logger.info(f"[OpenAlex] 总计发现 {len(all_papers)} 篇新论文")
         return all_papers
 
-    def _fetch_from_arxiv(self, arxiv_id: str, journal_code: str, journal_name: str, doi: str) -> Optional[PaperMetadata]:
+    def _fetch_from_arxiv(
+        self, arxiv_id: str, journal_code: str, journal_name: str, doi: str
+    ) -> Optional[PaperMetadata]:
         """
         通过 arXiv ID 从 ArXiv 获取论文元数据。
 
@@ -275,11 +259,7 @@ class OpenAlexSource(BasePaperSource):
 
             # 使用 arXiv API 获取论文
             search = arxiv.Search(id_list=[arxiv_id])
-            client = arxiv.Client(
-                page_size=1,
-                delay_seconds=3.0,
-                num_retries=2
-            )
+            client = arxiv.Client(page_size=1, delay_seconds=3.0, num_retries=2)
 
             results = list(client.results(search))
             if not results:
@@ -302,10 +282,12 @@ class OpenAlexSource(BasePaperSource):
                 journal=journal_name,  # 标注期刊名称
                 arxiv_id=arxiv_id,
                 arxiv_url=result.entry_id,
-                categories=list(result.categories) if result.categories else []
+                categories=list(result.categories) if result.categories else [],
             )
 
-            logger.info(f"    ✅ [{result.title[:30]}...] 使用 arXiv 源获取完整元数据 (arXiv:{arxiv_id})")
+            logger.info(
+                f"    ✅ [{result.title[:30]}...] 使用 arXiv 源获取完整元数据 (arXiv:{arxiv_id})"
+            )
             return metadata
 
         except Exception as e:
@@ -313,11 +295,7 @@ class OpenAlexSource(BasePaperSource):
             return None
 
     def _fetch_journal_papers(
-        self,
-        issn_list: List[str],
-        journal_code: str,
-        journal_name: str,
-        from_date: str
+        self, issn_list: List[str], journal_code: str, journal_name: str, from_date: str
     ) -> List[PaperMetadata]:
         """
         抓取单个期刊的论文。
@@ -357,7 +335,7 @@ class OpenAlexSource(BasePaperSource):
                     "per_page": per_page,
                     "page": page,
                     "sort": "publication_date:desc",
-                    "select": "id,doi,title,authorships,abstract_inverted_index,publication_date,primary_location,open_access,locations,best_oa_location,ids"
+                    "select": "id,doi,title,authorships,abstract_inverted_index,publication_date,primary_location,open_access,locations,best_oa_location,ids",
                 }
                 params.update(base_params)
 
@@ -388,8 +366,8 @@ class OpenAlexSource(BasePaperSource):
                         continue
 
                     # 清理标题（移除可能的HTML标签）
-                    title = re.sub(r'<[^>]+>', '', title)
-                    title = re.sub(r'\s+', ' ', title).strip()
+                    title = re.sub(r"<[^>]+>", "", title)
+                    title = re.sub(r"\s+", " ", title).strip()
 
                     # 提取作者
                     authors = []
@@ -407,14 +385,21 @@ class OpenAlexSource(BasePaperSource):
                         abstract = self._rebuild_abstract(inverted_index)
                         logger.debug(f"    ✅ [{title[:30]}...] 成功获取摘要")
                     else:
-                        logger.warning(f"    ⚠️  [{title[:30]}...] OpenAlex 未提供摘要数据 (可能因期刊版权限制)")
+                        logger.warning(
+                            f"    ⚠️  [{title[:30]}...] OpenAlex 未提供摘要数据 (可能因期刊版权限制)"
+                        )
 
                     # 提取发布日期
                     pub_date_str = item.get("publication_date")
                     published_date = self._parse_date(pub_date_str)
 
                     # 提取 URL
-                    landing_page_url = doi if doi.startswith("http") else f"https://doi.org/{doi.replace('openalex:', '')}"
+                    if doi.startswith("http"):
+                        landing_page_url = doi
+                    elif doi.startswith("openalex:"):
+                        landing_page_url = f"https://openalex.org/{doi.replace('openalex:', '')}"
+                    else:
+                        landing_page_url = f"https://doi.org/{doi}"
                     primary_location = item.get("primary_location", {})
                     if primary_location and primary_location.get("landing_page_url"):
                         landing_page_url = primary_location["landing_page_url"]
@@ -441,7 +426,9 @@ class OpenAlexSource(BasePaperSource):
                                     arxiv_url = loc_url
                                     # 使用正则表达式提取 arXiv ID，更健壮
                                     try:
-                                        match = re.search(r'arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{4,5})', loc_url)
+                                        match = re.search(
+                                            r"arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{4,5})", loc_url
+                                        )
                                         if match:
                                             arxiv_id = match.group(1)
                                     except Exception as e:
@@ -450,8 +437,12 @@ class OpenAlexSource(BasePaperSource):
 
                     # 🎯 优先策略：如果找到 arXiv 版本，使用 ArXiv 源获取完整元数据
                     if arxiv_id:
-                        logger.info(f"    🔄 [{title[:30]}...] 检测到 arXiv 版本: {arxiv_id}，转而使用 ArXiv 源获取完整元数据")
-                        arxiv_metadata = self._fetch_from_arxiv(arxiv_id, journal_code, journal_name, doi)
+                        logger.info(
+                            f"    🔄 [{title[:30]}...] 检测到 arXiv 版本: {arxiv_id}，转而使用 ArXiv 源获取完整元数据"
+                        )
+                        arxiv_metadata = self._fetch_from_arxiv(
+                            arxiv_id, journal_code, journal_name, doi
+                        )
                         if arxiv_metadata:
                             papers.append(arxiv_metadata)
                             total_fetched += 1
@@ -462,7 +453,9 @@ class OpenAlexSource(BasePaperSource):
                             logger.warning(f"    ⚠️  从 ArXiv 获取失败，回退到 OpenAlex 元数据")
                             # 继续使用 OpenAlex 数据
                     else:
-                        logger.debug(f"    ℹ️  [{title[:30]}...] 未找到 arXiv 版本，使用 OpenAlex 元数据")
+                        logger.debug(
+                            f"    ℹ️  [{title[:30]}...] 未找到 arXiv 版本，使用 OpenAlex 元数据"
+                        )
 
                     # 构建论文元数据
                     metadata = PaperMetadata(
@@ -477,7 +470,7 @@ class OpenAlexSource(BasePaperSource):
                         doi=doi if not doi.startswith("openalex:") else None,
                         journal=journal_name,
                         arxiv_id=arxiv_id,
-                        arxiv_url=arxiv_url
+                        arxiv_url=arxiv_url,
                     )
                     papers.append(metadata)
                     total_fetched += 1
@@ -499,7 +492,7 @@ class OpenAlexSource(BasePaperSource):
             logger.error(f"OpenAlex 数据处理失败: {e}")
             traceback.print_exc()
 
-        logger.info(f"  共获取 {len(papers)} 篇论文（分 {page} 页）")
+        logger.info(f"  共获取 {len(papers)} 篇论文（分 {page - 1} 页）")
         return papers
 
     def _rebuild_abstract(self, inverted_index: Dict[str, List[int]]) -> str:
@@ -528,7 +521,9 @@ class OpenAlexSource(BasePaperSource):
             # 防止内存溢出：限制最大position值
             MAX_ALLOWED_POSITION = 50000  # 约50KB的文本
             if max_position > MAX_ALLOWED_POSITION:
-                logger.warning(f"摘要position过大 ({max_position})，可能数据损坏，截断到 {MAX_ALLOWED_POSITION}")
+                logger.warning(
+                    f"摘要position过大 ({max_position})，可能数据损坏，截断到 {MAX_ALLOWED_POSITION}"
+                )
                 max_position = MAX_ALLOWED_POSITION
 
             # 创建位置数组

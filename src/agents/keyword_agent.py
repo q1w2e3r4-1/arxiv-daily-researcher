@@ -10,6 +10,7 @@ from difflib import SequenceMatcher
 
 logger = logging.getLogger(__name__)
 
+
 class KeywordAgent:
     """
     关键词提取Agent。
@@ -23,11 +24,11 @@ class KeywordAgent:
     - 支持增量更新（只提取新PDF）
     - 智能去重相似关键词
     """
+
     def __init__(self):
         # 初始化低成本LLM客户端
         self.client = OpenAI(
-            api_key=settings.CHEAP_LLM.api_key,
-            base_url=settings.CHEAP_LLM.base_url
+            api_key=settings.CHEAP_LLM.api_key, base_url=settings.CHEAP_LLM.base_url
         )
 
         # 缓存文件路径
@@ -44,7 +45,7 @@ class KeywordAgent:
             str: 文件的MD5哈希值
         """
         try:
-            with open(pdf_path, 'rb') as f:
+            with open(pdf_path, "rb") as f:
                 return hashlib.md5(f.read()).hexdigest()
         except Exception as e:
             logger.error(f"计算PDF哈希失败 {pdf_path}: {e}")
@@ -66,7 +67,7 @@ class KeywordAgent:
             return {"pdf_hashes": {}, "pdf_keywords": {}, "keywords": {}}
 
         try:
-            with open(self.cache_file, 'r', encoding='utf-8') as f:
+            with open(self.cache_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 # 兼容旧版本缓存格式
                 if "pdf_keywords" not in data:
@@ -84,7 +85,8 @@ class KeywordAgent:
             cache_data: 要保存的缓存数据
         """
         try:
-            with open(self.cache_file, 'w', encoding='utf-8') as f:
+            self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.cache_file, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f, ensure_ascii=False, indent=2)
             logger.info(f"关键词缓存已保存到 {self.cache_file}")
         except Exception as e:
@@ -140,7 +142,9 @@ class KeywordAgent:
                 similarity = self._calculate_similarity(keyword, existing_keyword)
                 if similarity >= threshold:
                     is_duplicate = True
-                    logger.debug(f"去重: '{keyword}' 与 '{existing_keyword}' 相似度 {similarity:.2f} >= {threshold}，已跳过")
+                    logger.debug(
+                        f"去重: '{keyword}' 与 '{existing_keyword}' 相似度 {similarity:.2f} >= {threshold}，已跳过"
+                    )
                     removed_count += 1
                     break
 
@@ -166,15 +170,14 @@ class KeywordAgent:
             str: 提取的文本，失败时返回空串
         """
         try:
-            doc = fitz.open(pdf_path)
-            text = ""
-            # 只提取前两页
-            for i, page in enumerate(doc):
-                if i >= 2:
-                    break
-                text += page.get_text()
-            doc.close()
-            return text
+            with fitz.open(pdf_path) as doc:
+                text = ""
+                # 只提取前两页
+                for i, page in enumerate(doc):
+                    if i >= 2:
+                        break
+                    text += page.get_text()
+                return text
         except Exception as e:
             logger.error(f"PDF无法读取 {pdf_path}: {e}")
             return ""
@@ -269,7 +272,9 @@ class KeywordAgent:
             context_text = ""
             # 最多分析5个新PDF以节省时间和成本
             for pdf in new_pdfs[:5]:
-                context_text += f"---\n论文: {pdf.name}\n{self._extract_text_from_pdf(pdf)[:2000]}\n"
+                context_text += (
+                    f"---\n论文: {pdf.name}\n{self._extract_text_from_pdf(pdf)[:2000]}\n"
+                )
                 logger.info(f"  提取文本: {pdf.name}")
 
             # 构建提示词，要求LLM按重要性分层提取关键词
@@ -316,7 +321,7 @@ class KeywordAgent:
                     model=settings.CHEAP_LLM.model_name,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
-                    response_format={"type": "json_object"}
+                    response_format={"type": "json_object"},
                 )
                 content = response.choices[0].message.content
 
@@ -333,31 +338,38 @@ class KeywordAgent:
 
                 # 添加高重要性关键词
                 high_keywords = data.get("high_importance", [])
-                for kw in high_keywords[:settings.REFERENCE_COUNT_HIGH]:
+                for kw in high_keywords[: settings.REFERENCE_COUNT_HIGH]:
                     new_keywords[kw] = settings.REFERENCE_WEIGHT_HIGH
 
                 # 添加中重要性关键词
                 medium_keywords = data.get("medium_importance", [])
-                for kw in medium_keywords[:settings.REFERENCE_COUNT_MEDIUM]:
+                for kw in medium_keywords[: settings.REFERENCE_COUNT_MEDIUM]:
                     new_keywords[kw] = settings.REFERENCE_WEIGHT_MEDIUM
 
                 # 添加低重要性关键词
                 low_keywords = data.get("low_importance", [])
-                for kw in low_keywords[:settings.REFERENCE_COUNT_LOW]:
+                for kw in low_keywords[: settings.REFERENCE_COUNT_LOW]:
                     new_keywords[kw] = settings.REFERENCE_WEIGHT_LOW
 
                 logger.info(f"从新PDF中提取了 {len(new_keywords)} 个新关键词:")
-                logger.info(f"  高权重({settings.REFERENCE_WEIGHT_HIGH}): {len(high_keywords[:settings.REFERENCE_COUNT_HIGH])} 个")
-                logger.info(f"  中权重({settings.REFERENCE_WEIGHT_MEDIUM}): {len(medium_keywords[:settings.REFERENCE_COUNT_MEDIUM])} 个")
-                logger.info(f"  低权重({settings.REFERENCE_WEIGHT_LOW}): {len(low_keywords[:settings.REFERENCE_COUNT_LOW])} 个")
+                logger.info(
+                    f"  高权重({settings.REFERENCE_WEIGHT_HIGH}): {len(high_keywords[:settings.REFERENCE_COUNT_HIGH])} 个"
+                )
+                logger.info(
+                    f"  中权重({settings.REFERENCE_WEIGHT_MEDIUM}): {len(medium_keywords[:settings.REFERENCE_COUNT_MEDIUM])} 个"
+                )
+                logger.info(
+                    f"  低权重({settings.REFERENCE_WEIGHT_LOW}): {len(low_keywords[:settings.REFERENCE_COUNT_LOW])} 个"
+                )
 
-                # 为每个新PDF保存其关键词
-                for pdf in new_pdfs:
+                # 只为实际分析过的PDF保存其关键词
+                for pdf in new_pdfs[:5]:
                     cached_pdf_keywords[pdf.name] = new_keywords.copy()
 
             except Exception as e:
                 logger.error(f"通过LLM提取关键词失败: {e}")
                 import traceback
+
                 traceback.print_exc()
                 logger.info("继续使用现有缓存的关键词")
 
@@ -382,7 +394,7 @@ class KeywordAgent:
         cache_data = {
             "pdf_hashes": current_hashes,
             "pdf_keywords": cached_pdf_keywords,
-            "keywords": deduplicated_keywords  # 保留用于向后兼容
+            "keywords": deduplicated_keywords,  # 保留用于向后兼容
         }
         self._save_cache(cache_data)
 

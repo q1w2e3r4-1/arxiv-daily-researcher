@@ -21,7 +21,10 @@ logger = logging.getLogger(__name__)
 # MinerU API 错误码 → 是否应降级到 PyMuPDF（True = 降级，False = 可重试）
 MINERU_ERROR_CODES = {
     "A0202": ("Token 错误，请检查 MINERU_API_KEY 是否正确", True),
-    "A0211": ("Token 已过期（有效期 3 个月），请到 https://mineru.net/apiManage/apiKey 重新申请", True),
+    "A0211": (
+        "Token 已过期（有效期 3 个月），请到 https://mineru.net/apiManage/apiKey 重新申请",
+        True,
+    ),
     "-60018": ("MinerU 每日解析任务数量已达上限，明日重置", True),
     "-60019": ("MinerU HTML 解析额度不足", True),
     "-60007": ("MinerU 模型服务暂时不可用", False),
@@ -94,7 +97,8 @@ class MineruParser:
         try:
             if not settings.ENABLE_NOTIFICATIONS:
                 return
-            from agents.notifier import NotifierAgent
+            from notifications.notifier import NotifierAgent
+
             notifier = NotifierAgent()
 
             suggestion_map = {
@@ -106,8 +110,7 @@ class MineruParser:
                 "-60006": "PDF 页数超过 600 页限制，建议使用 pymupdf 本地解析",
             }
             suggestion = suggestion_map.get(
-                error_code,
-                "请检查网络连接和 MinerU API 配置，或切换 pdf_parser.mode 为 pymupdf"
+                error_code, "请检查网络连接和 MinerU API 配置，或切换 pdf_parser.mode 为 pymupdf"
             )
 
             notifier.notify_error(
@@ -268,8 +271,7 @@ class MineruParser:
 
                 if not md_files:
                     # 回退到任何文本文件
-                    txt_files = [f for f in zf.namelist()
-                                 if f.endswith((".txt", ".json"))]
+                    txt_files = [f for f in zf.namelist() if f.endswith((".txt", ".json"))]
                     if not txt_files:
                         logger.error(f"MinerU ZIP 中未找到文本文件，包含: {zf.namelist()}")
                         return None
