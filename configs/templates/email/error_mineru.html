@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<!--
+  HTML 邮件通知模板 — MinerU 错误告警
+  可用变量（使用 {变量名} 引用）：
+    {timestamp}    — 发生时间
+    {error_code}   — MinerU 错误码
+    {error_detail} — 错误详细描述
+    {suggestion}   — 建议的处理方式
+
+  当 MinerU API 出现不可恢复错误时发送此通知（Token 过期、额度耗尽等）。
+  修改此文件即可自定义 MinerU 错误邮件通知的样式和内容。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ArXiv Daily Researcher — MinerU 服务异常</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f0f4f8;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table width="600" cellpadding="0" cellspacing="0" border="0"
+          style="max-width:600px;width:100%;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+          <!-- Header -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#1a1f36 0%,#2d3561 100%);padding:28px 32px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td>
+                    <p style="margin:0 0 4px;font-size:11px;color:#8892b0;letter-spacing:1.5px;text-transform:uppercase;">ArXiv Daily Researcher</p>
+                    <h1 style="margin:0;font-size:22px;font-weight:700;color:#ffffff;">MinerU 服务异常</h1>
+                  </td>
+                  <td align="right" valign="middle">
+                    <span style="display:inline-block;background-color:#ed8936;color:#ffffff;font-size:12px;font-weight:700;padding:5px 12px;border-radius:16px;">⚠ 服务告警</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td colspan="2" style="padding-top:10px;">
+                    <p style="margin:0;font-size:12px;color:#8892b0;">⏱ {timestamp}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Error Code Badge -->
+          <tr>
+            <td style="padding:24px 32px 0;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                style="background-color:#fffaf0;border:1px solid #fbd38d;border-left:4px solid #ed8936;border-radius:6px;">
+                <tr>
+                  <td style="padding:16px 18px;">
+                    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td style="padding-bottom:10px;">
+                          <span style="display:inline-block;background-color:#fff3cd;color:#856404;font-size:11px;font-weight:600;padding:3px 8px;border-radius:4px;margin-right:8px;">错误码</span>
+                          <code style="font-size:13px;color:#744210;background-color:#fefcbf;padding:2px 6px;border-radius:3px;">{error_code}</code>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <p style="margin:0;font-size:14px;color:#744210;line-height:1.6;word-break:break-word;">{error_detail}</p>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Auto-fallback Notice -->
+          <tr>
+            <td style="padding:16px 32px 0;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                style="background-color:#ebf8ff;border:1px solid #90cdf4;border-radius:6px;">
+                <tr>
+                  <td style="padding:12px 16px;">
+                    <p style="margin:0;font-size:13px;color:#2b6cb0;">ℹ️ &nbsp;本次运行已<strong>自动降级为 PyMuPDF 本地解析</strong>，核心功能不受影响。</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Suggestion -->
+          <tr>
+            <td style="padding:16px 32px 0;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                style="background-color:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;">
+                <tr>
+                  <td style="padding:14px 18px;">
+                    <p style="margin:0 0 6px;font-size:12px;font-weight:700;color:#276749;text-transform:uppercase;letter-spacing:0.5px;">处理建议</p>
+                    <p style="margin:0;font-size:14px;color:#22543d;line-height:1.6;">{suggestion}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 32px 28px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="border-top:1px solid #e8ebf0;padding-top:16px;">
+                    <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">
+                      此邮件由 <strong style="color:#5b6af0;">ArXiv Daily Researcher</strong> 自动发送 &nbsp;·&nbsp; 请勿直接回复
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

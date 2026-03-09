@@ -37,14 +37,15 @@ import requests
 logger = logging.getLogger(__name__)
 
 # 模板目录
-TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "configs" / "notification_templates"
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "configs" / "templates" / "notifications"
+EMAIL_TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "configs" / "templates" / "email"
 
 
 def _load_template(name: str) -> Optional[str]:
     """
     加载通知模板文件。
 
-    模板文件存放于 configs/notification_templates/ 目录，
+    模板文件存放于 configs/templates/notifications/ 目录，
     以 '# ' 开头（单个 #）的行视为注释，不会出现在最终消息中。
     '## ' 及更多 # 开头的行保留为 Markdown 标题。
 
@@ -83,9 +84,34 @@ def _render_template(template: str, **kwargs) -> str:
     return result
 
 
+def _load_email_template(name: str) -> Optional[str]:
+    """
+    加载 HTML 邮件通知模板文件。
+
+    模板文件存放于 configs/templates/email/ 目录，以 .html 为扩展名。
+    HTML 文件开头的 HTML 注释（<!-- ... -->）会被保留，不做处理。
+
+    参数:
+        name: 模板文件名（不含扩展名），如 'success'、'error_llm'
+
+    返回:
+        模板 HTML 内容，文件不存在时返回 None
+    """
+    path = EMAIL_TEMPLATE_DIR / f"{name}.html"
+    if not path.exists():
+        logger.debug(f"HTML 邮件模板不存在: {path}")
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"加载 HTML 邮件模板失败 ({path}): {e}")
+        return None
+
+
 @dataclass
 class RunResult:
     """管道运行结果摘要"""
+
     run_timestamp: str = ""
     total_papers_fetched: int = 0
     papers_by_source: Dict[str, int] = field(default_factory=dict)
@@ -103,8 +129,7 @@ class BaseNotifier(ABC):
     """通知器抽象基类"""
 
     @abstractmethod
-    def send(self, subject: str, body: str,
-             attachments: Optional[List[Path]] = None) -> bool:
+    def send(self, subject: str, body: str, attachments: Optional[List[Path]] = None) -> bool:
         """发送通知，成功返回 True"""
         ...
 
@@ -112,8 +137,16 @@ class BaseNotifier(ABC):
 class EmailNotifier(BaseNotifier):
     """SMTP 邮件通知"""
 
-    def __init__(self, host: str, port: int, user: str, password: str,
-                 from_addr: str, to_addrs: List[str], use_tls: bool = True):
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        user: str,
+        password: str,
+        from_addr: str,
+        to_addrs: List[str],
+        use_tls: bool = True,
+    ):
         self.host = host
         self.port = port
         self.user = user
@@ -122,15 +155,42 @@ class EmailNotifier(BaseNotifier):
         self.to_addrs = to_addrs
         self.use_tls = use_tls
 
-    def send(self, subject: str, body: str,
-             attachments: Optional[List[Path]] = None) -> bool:
-        msg = MIMEMultipart()
-        msg["From"] = self.from_addr
-        msg["To"] = ", ".join(self.to_addrs)
-        msg["Subject"] = subject
-
-        # 正文
-        msg.attach(MIMEText(body, "plain", "utf-8"))
+    def send(
+        self,
+        subject: str,
+        body: str,
+        attachments: Optional[List[Path]] = None,
+        html_body: Optional[str] = None,
+    ) -> bool:
+        # 根据是否有附件和 HTML 选择合适的 MIME 结构
+        if attachments:
+            # 有附件：外层 mixed，内层 alternative（如有 HTML）
+            msg = MIMEMultipart("mixed")
+            msg["From"] = self.from_addr
+            msg["To"] = ", ".join(self.to_addrs)
+            msg["Subject"] = subject
+            if html_body:
+                alt_part = MIMEMultipart("alternative")
+                alt_part.attach(MIMEText(body, "plain", "utf-8"))
+                alt_part.attach(MIMEText(html_body, "html", "utf-8"))
+                msg.attach(alt_part)
+            else:
+                msg.attach(MIMEText(body, "plain", "utf-8"))
+        elif html_body:
+            # 无附件 + HTML：直接用 alternative
+            msg = MIMEMultipart("alternative")
+            msg["From"] = self.from_addr
+            msg["To"] = ", ".join(self.to_addrs)
+            msg["Subject"] = subject
+            msg.attach(MIMEText(body, "plain", "utf-8"))
+            msg.attach(MIMEText(html_body, "html", "utf-8"))
+        else:
+            # 仅纯文本
+            msg = MIMEMultipart()
+            msg["From"] = self.from_addr
+            msg["To"] = ", ".join(self.to_addrs)
+            msg["Subject"] = subject
+            msg.attach(MIMEText(body, "plain", "utf-8"))
 
         # 附件
         if attachments:
@@ -140,10 +200,7 @@ class EmailNotifier(BaseNotifier):
                     with open(filepath, "rb") as f:
                         part.set_payload(f.read())
                     encoders.encode_base64(part)
-                    part.add_header(
-                        "Content-Disposition",
-                        f"attachment; filename={filepath.name}"
-                    )
+                    part.add_header("Content-Disposition", f"attachment; filename={filepath.name}")
                     msg.attach(part)
 
         # 发送
@@ -172,8 +229,7 @@ class WebhookNotifier(BaseNotifier):
         self.webhook_url = webhook_url
         self.extra = kwargs  # secret, chat_id 等
 
-    def send(self, subject: str, body: str,
-             attachments: Optional[List[Path]] = None) -> bool:
+    def send(self, subject: str, body: str, attachments: Optional[List[Path]] = None) -> bool:
         formatter = getattr(self, f"_format_{self.platform}", self._format_generic)
         url, payload, headers = formatter(subject, body)
         resp = requests.post(url, json=payload, headers=headers, timeout=30)
@@ -187,10 +243,7 @@ class WebhookNotifier(BaseNotifier):
         # 企业微信 markdown 限制 4096 字节
         if len(content.encode("utf-8")) > 4000:
             content = content[:1300] + "\n\n...(内容已截断)"
-        payload = {
-            "msgtype": "markdown",
-            "markdown": {"content": content}
-        }
+        payload = {"msgtype": "markdown", "markdown": {"content": content}}
         return self.webhook_url, payload, {"Content-Type": "application/json"}
 
     def _format_dingtalk(self, subject: str, body: str):
@@ -201,20 +254,12 @@ class WebhookNotifier(BaseNotifier):
             timestamp = str(round(time.time() * 1000))
             string_to_sign = f"{timestamp}\n{secret}"
             hmac_code = hmac.new(
-                secret.encode("utf-8"),
-                string_to_sign.encode("utf-8"),
-                digestmod=hashlib.sha256
+                secret.encode("utf-8"), string_to_sign.encode("utf-8"), digestmod=hashlib.sha256
             ).digest()
             sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
             url = f"{url}&timestamp={timestamp}&sign={sign}"
 
-        payload = {
-            "msgtype": "markdown",
-            "markdown": {
-                "title": subject,
-                "text": body
-            }
-        }
+        payload = {"msgtype": "markdown", "markdown": {"title": subject, "text": body}}
         return url, payload, {"Content-Type": "application/json"}
 
     def _format_telegram(self, subject: str, body: str):
@@ -224,36 +269,22 @@ class WebhookNotifier(BaseNotifier):
         # Telegram 消息限 4096 字符
         if len(text) > 4000:
             text = text[:3900] + "\n\n...(内容已截断)"
-        payload = {
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "Markdown"
-        }
+        payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
         return self.webhook_url, payload, {"Content-Type": "application/json"}
 
     def _format_slack(self, subject: str, body: str):
         """Slack Incoming Webhook"""
         payload = {
             "blocks": [
-                {
-                    "type": "header",
-                    "text": {"type": "plain_text", "text": subject}
-                },
-                {
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": body}
-                }
+                {"type": "header", "text": {"type": "plain_text", "text": subject}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": body}},
             ]
         }
         return self.webhook_url, payload, {"Content-Type": "application/json"}
 
     def _format_generic(self, subject: str, body: str):
         """通用 Webhook"""
-        payload = {
-            "subject": subject,
-            "body": body,
-            "timestamp": datetime.now().isoformat()
-        }
+        payload = {"subject": subject, "body": body, "timestamp": datetime.now().isoformat()}
         return self.webhook_url, payload, {"Content-Type": "application/json"}
 
 
@@ -262,6 +293,7 @@ class NotifierAgent:
 
     def __init__(self):
         from config import settings
+
         self.settings = settings
         self.notifiers: List[BaseNotifier] = []
         self._setup_notifiers()
@@ -271,46 +303,47 @@ class NotifierAgent:
         s = self.settings
 
         # Email
-        if s.SMTP_HOST and s.SMTP_TO:
+        if s.NOTIFY_EMAIL_ENABLED and s.SMTP_HOST and s.SMTP_TO:
             to_addrs = [a.strip() for a in s.SMTP_TO.split(",") if a.strip()]
-            self.notifiers.append(EmailNotifier(
-                host=s.SMTP_HOST, port=s.SMTP_PORT,
-                user=s.SMTP_USER, password=s.SMTP_PASSWORD,
-                from_addr=s.SMTP_FROM, to_addrs=to_addrs,
-                use_tls=s.SMTP_USE_TLS
-            ))
+            self.notifiers.append(
+                EmailNotifier(
+                    host=s.SMTP_HOST,
+                    port=s.SMTP_PORT,
+                    user=s.SMTP_USER,
+                    password=s.SMTP_PASSWORD,
+                    from_addr=s.SMTP_FROM,
+                    to_addrs=to_addrs,
+                    use_tls=s.SMTP_USE_TLS,
+                )
+            )
             logger.info("已启用邮件通知")
 
         # 企业微信
-        if s.WECHAT_WEBHOOK_URL:
-            self.notifiers.append(
-                WebhookNotifier("wechat_work", s.WECHAT_WEBHOOK_URL))
+        if s.NOTIFY_WECHAT_ENABLED and s.WECHAT_WEBHOOK_URL:
+            self.notifiers.append(WebhookNotifier("wechat_work", s.WECHAT_WEBHOOK_URL))
             logger.info("已启用企业微信通知")
 
         # 钉钉
-        if s.DINGTALK_WEBHOOK_URL:
+        if s.NOTIFY_DINGTALK_ENABLED and s.DINGTALK_WEBHOOK_URL:
             self.notifiers.append(
-                WebhookNotifier("dingtalk", s.DINGTALK_WEBHOOK_URL,
-                                secret=s.DINGTALK_SECRET))
+                WebhookNotifier("dingtalk", s.DINGTALK_WEBHOOK_URL, secret=s.DINGTALK_SECRET)
+            )
             logger.info("已启用钉钉通知")
 
         # Telegram
-        if s.TELEGRAM_BOT_TOKEN and s.TELEGRAM_CHAT_ID:
+        if s.NOTIFY_TELEGRAM_ENABLED and s.TELEGRAM_BOT_TOKEN and s.TELEGRAM_CHAT_ID:
             url = f"https://api.telegram.org/bot{s.TELEGRAM_BOT_TOKEN}/sendMessage"
-            self.notifiers.append(
-                WebhookNotifier("telegram", url, chat_id=s.TELEGRAM_CHAT_ID))
+            self.notifiers.append(WebhookNotifier("telegram", url, chat_id=s.TELEGRAM_CHAT_ID))
             logger.info("已启用 Telegram 通知")
 
         # Slack
-        if s.SLACK_WEBHOOK_URL:
-            self.notifiers.append(
-                WebhookNotifier("slack", s.SLACK_WEBHOOK_URL))
+        if s.NOTIFY_SLACK_ENABLED and s.SLACK_WEBHOOK_URL:
+            self.notifiers.append(WebhookNotifier("slack", s.SLACK_WEBHOOK_URL))
             logger.info("已启用 Slack 通知")
 
         # 通用 Webhook
-        if s.GENERIC_WEBHOOK_URL:
-            self.notifiers.append(
-                WebhookNotifier("generic", s.GENERIC_WEBHOOK_URL))
+        if s.NOTIFY_GENERIC_WEBHOOK_ENABLED and s.GENERIC_WEBHOOK_URL:
+            self.notifiers.append(WebhookNotifier("generic", s.GENERIC_WEBHOOK_URL))
             logger.info("已启用通用 Webhook 通知")
 
     # ------------------------------------------------------------------
@@ -330,11 +363,17 @@ class NotifierAgent:
 
         subject = self._format_subject(result)
         body = self._format_body(result)
-        attachments = self._collect_attachments(result) if self.settings.NOTIFY_ATTACH_REPORTS else []
+        html_body = self._format_html_body(result)
+        attachments = (
+            self._collect_attachments(result) if self.settings.NOTIFY_ATTACH_REPORTS else []
+        )
 
         for notifier in self.notifiers:
             try:
-                notifier.send(subject, body, attachments)
+                if isinstance(notifier, EmailNotifier) and html_body:
+                    notifier.send(subject, body, attachments, html_body=html_body)
+                else:
+                    notifier.send(subject, body, attachments)
             except Exception as e:
                 logger.warning(f"通知发送失败 ({type(notifier).__name__}): {e}")
 
@@ -346,7 +385,7 @@ class NotifierAgent:
         """
         发送错误告警通知。
 
-        使用 configs/notification_templates/ 下的错误模板文件渲染消息并发送。
+        使用 configs/templates/notifications/ 下的错误模板文件渲染消息并发送。
         仅在 on_failure 为 True 时发送。模板或渠道不存在时静默跳过。
 
         参数:
@@ -366,7 +405,9 @@ class NotifierAgent:
             body = _render_template(template, **kwargs)
         else:
             body = f"## ArXiv Daily Researcher\n\n"
-            body += f"<font color=\"warning\">**错误告警**</font> | {kwargs.get('timestamp', '')}\n\n"
+            body += (
+                f"<font color=\"warning\">**错误告警**</font> | {kwargs.get('timestamp', '')}\n\n"
+            )
             for k, v in kwargs.items():
                 if k != "timestamp":
                     body += f"> {k}: {v}\n"
@@ -375,7 +416,11 @@ class NotifierAgent:
 
         for notifier in self.notifiers:
             try:
-                notifier.send(subject, body)
+                if isinstance(notifier, EmailNotifier):
+                    html_body = self._format_html_error_body(template_name, **kwargs)
+                    notifier.send(subject, body, html_body=html_body)
+                else:
+                    notifier.send(subject, body)
             except Exception as e:
                 logger.warning(f"错误告警发送失败 ({type(notifier).__name__}): {e}")
 
@@ -416,13 +461,13 @@ class NotifierAgent:
         if result.top_papers:
             top_lines.append(f"**Top {len(result.top_papers)} 论文**")
             for i, p in enumerate(result.top_papers, 1):
-                title = p.get('title', '')[:60]
-                score = p.get('score', 0)
-                src = p.get('source', '').upper()
-                tldr = p.get('tldr', '')[:80]
-                url = p.get('url', '')
+                title = p.get("title", "")[:60]
+                score = p.get("score", 0)
+                src = p.get("source", "").upper()
+                tldr = p.get("tldr", "")[:80]
+                url = p.get("url", "")
                 top_lines.append(f"> **{i}.** `{src}` {title}")
-                top_lines.append(f"> <font color=\"comment\">Score: {score:.1f} | {tldr}</font>")
+                top_lines.append(f'> <font color="comment">Score: {score:.1f} | {tldr}</font>')
                 if url:
                     top_lines.append(f"> [查看原文]({url})")
         top_papers = "\n".join(top_lines)
@@ -483,17 +528,176 @@ class NotifierAgent:
             lines.append("")
             lines.append(f"Top {len(result.top_papers)} Papers:")
             for i, p in enumerate(result.top_papers, 1):
-                title = p.get('title', '')[:80]
-                score = p.get('score', 0)
-                src = p.get('source', '').upper()
-                tldr = p.get('tldr', '')[:120]
-                url = p.get('url', '')
+                title = p.get("title", "")[:80]
+                score = p.get("score", 0)
+                src = p.get("source", "").upper()
+                tldr = p.get("tldr", "")[:120]
+                url = p.get("url", "")
                 lines.append(f"  {i}. [{src}] {title}")
                 lines.append(f"     Score: {score:.1f} | {tldr}")
                 if url:
                     lines.append(f"     {url}")
 
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # HTML 邮件正文构建
+    # ------------------------------------------------------------------
+
+    def _format_html_body(self, result: RunResult) -> Optional[str]:
+        """使用 HTML 模板生成邮件正文，模板不存在时返回 None"""
+        template_name = "success" if result.success else "failure"
+        template = _load_email_template(template_name)
+        if not template:
+            return None
+
+        source_rows = self._build_source_rows_html(result)
+        top_papers_html = self._build_top_papers_html(result)
+        report_list_html = self._build_report_list_html(result)
+
+        return _render_template(
+            template,
+            timestamp=result.run_timestamp,
+            total_fetched=result.total_papers_fetched,
+            total_qualified=result.total_qualified,
+            total_analyzed=result.total_analyzed,
+            source_rows=source_rows,
+            top_papers_html=top_papers_html,
+            report_list_html=report_list_html,
+            error_message=self._html_escape(result.error_message or "无"),
+        )
+
+    def _format_html_error_body(self, template_name: str, **kwargs) -> Optional[str]:
+        """使用 HTML 模板生成错误告警邮件正文，模板不存在时返回 None"""
+        template = _load_email_template(template_name)
+        if not template:
+            return None
+        escaped = {k: self._html_escape(str(v)) for k, v in kwargs.items()}
+        return _render_template(template, **escaped)
+
+    @staticmethod
+    def _html_escape(text: str) -> str:
+        """对文本进行 HTML 转义，防止特殊字符破坏结构"""
+        return (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
+
+    def _build_source_rows_html(self, result: RunResult) -> str:
+        """构建数据来源统计表格行 HTML"""
+        rows = []
+        row_colors = ["#ffffff", "#f9fafb"]
+        for i, source in enumerate(sorted(result.papers_by_source.keys())):
+            fetched = result.papers_by_source.get(source, 0)
+            qualified = result.qualified_by_source.get(source, 0)
+            analyzed = result.analyzed_by_source.get(source, 0)
+            bg = row_colors[i % 2]
+            rows.append(
+                f'<tr style="background-color:{bg};">'
+                f'<td style="padding:10px 14px;font-size:13px;color:#374151;border-bottom:1px solid #f0f0f0;">'
+                f'<span style="display:inline-block;background-color:#e0e7ff;color:#3730a3;'
+                f'font-size:11px;font-weight:600;padding:2px 7px;border-radius:4px;">'
+                f"{self._html_escape(source.upper())}</span></td>"
+                f'<td style="padding:10px 14px;text-align:center;font-size:13px;font-weight:600;'
+                f'color:#374151;border-bottom:1px solid #f0f0f0;">{fetched}</td>'
+                f'<td style="padding:10px 14px;text-align:center;font-size:13px;font-weight:600;'
+                f'color:#374151;border-bottom:1px solid #f0f0f0;">{qualified}</td>'
+                f'<td style="padding:10px 14px;text-align:center;font-size:13px;font-weight:600;'
+                f'color:#374151;border-bottom:1px solid #f0f0f0;">{analyzed}</td>'
+                f"</tr>"
+            )
+        return (
+            "\n".join(rows)
+            if rows
+            else (
+                '<tr><td colspan="4" style="padding:14px;text-align:center;'
+                'font-size:13px;color:#9ca3af;">暂无数据</td></tr>'
+            )
+        )
+
+    def _build_top_papers_html(self, result: RunResult) -> str:
+        """构建 Top-N 论文卡片 HTML（作为完整的 <tr> 块返回）"""
+        if not result.top_papers:
+            return ""
+
+        cards = []
+        for i, p in enumerate(result.top_papers, 1):
+            title = self._html_escape(p.get("title", "")[:100])
+            score = p.get("score", 0)
+            src = self._html_escape(p.get("source", "").upper())
+            tldr = self._html_escape(p.get("tldr", "")[:200])
+            url = p.get("url", "")
+            link_html = (
+                (
+                    f'<p style="margin:8px 0 0;">'
+                    f'<a href="{self._html_escape(url)}" '
+                    f'style="color:#5b6af0;font-size:12px;text-decoration:none;">查看原文 →</a></p>'
+                )
+                if url
+                else ""
+            )
+
+            cards.append(
+                f'<table width="100%" cellpadding="0" cellspacing="0" border="0" '
+                f'style="margin-bottom:10px;border:1px solid #e8ebf0;border-radius:8px;'
+                f'overflow:hidden;border-collapse:separate;">'
+                f'<tr><td style="padding:14px 16px;background-color:#fafafa;border-bottom:1px solid #e8ebf0;">'
+                f'<p style="margin:0;font-size:12px;color:#6b7280;">'
+                f'<span style="background-color:#e0e7ff;color:#3730a3;font-size:11px;'
+                f'font-weight:600;padding:1px 6px;border-radius:3px;margin-right:6px;">{src}</span>'
+                f'Score: <strong style="color:#1a7a4a;">{score:.1f}</strong></p></td></tr>'
+                f'<tr><td style="padding:14px 16px;">'
+                f'<p style="margin:0 0 6px;font-size:14px;font-weight:600;color:#1a1f36;'
+                f'line-height:1.4;">{i}. {title}</p>'
+                f'<p style="margin:0;font-size:13px;color:#4b5563;line-height:1.6;">{tldr}</p>'
+                f"{link_html}</td></tr>"
+                f"</table>"
+            )
+
+        cards_html = "\n".join(cards)
+        return (
+            f'<tr><td style="padding:28px 32px 0;">'
+            f'<h2 style="margin:0 0 14px;font-size:14px;font-weight:700;color:#1a1f36;'
+            f"text-transform:uppercase;letter-spacing:1px;border-left:3px solid #5b6af0;"
+            f'padding-left:10px;">Top {len(result.top_papers)} 论文</h2>'
+            f"{cards_html}"
+            f"</td></tr>"
+        )
+
+    def _build_report_list_html(self, result: RunResult) -> str:
+        """构建报告路径列表 HTML（作为完整的 <tr> 块返回）"""
+        if not result.report_paths:
+            return ""
+
+        rows = []
+        row_colors = ["#ffffff", "#f9fafb"]
+        for i, (source, path_str) in enumerate(sorted(result.report_paths.items())):
+            bg = row_colors[i % 2]
+            rows.append(
+                f'<tr style="background-color:{bg};">'
+                f'<td style="padding:10px 14px;font-size:12px;border-bottom:1px solid #f0f0f0;">'
+                f'<span style="background-color:#e0e7ff;color:#3730a3;font-size:11px;'
+                f'font-weight:600;padding:2px 7px;border-radius:4px;">'
+                f"{self._html_escape(source.upper())}</span></td>"
+                f'<td style="padding:10px 14px;font-size:12px;color:#6b7280;'
+                f'font-family:monospace;word-break:break-all;border-bottom:1px solid #f0f0f0;">'
+                f"{self._html_escape(path_str)}</td>"
+                f"</tr>"
+            )
+
+        rows_html = "\n".join(rows)
+        return (
+            f'<tr><td style="padding:20px 32px 0;">'
+            f'<h2 style="margin:0 0 12px;font-size:14px;font-weight:700;color:#1a1f36;'
+            f"text-transform:uppercase;letter-spacing:1px;border-left:3px solid #5b6af0;"
+            f'padding-left:10px;">报告路径</h2>'
+            f'<table width="100%" cellpadding="0" cellspacing="0" border="0" '
+            f'style="border-collapse:collapse;border:1px solid #e8ebf0;border-radius:8px;overflow:hidden;">'
+            f"{rows_html}"
+            f"</table></td></tr>"
+        )
 
     def _collect_attachments(self, result: RunResult) -> List[Path]:
         """收集报告文件作为邮件附件"""

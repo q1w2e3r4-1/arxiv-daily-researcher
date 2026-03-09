@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<!--
+  HTML 邮件通知模板 — 运行失败
+  可用变量（使用 {变量名} 引用）：
+    {timestamp}        — 运行时间戳
+    {error_message}    — 错误信息
+    {total_fetched}    — 抓取论文总数
+    {total_qualified}  — 及格论文总数
+    {total_analyzed}   — 深度分析论文总数
+    {source_rows}      — 各数据源统计行（HTML <tr> 片段）
+
+  修改此文件即可自定义失败邮件通知的样式和内容。
+-->
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ArXiv Daily Researcher — 运行失败</title>
+</head>
+
+<body
+  style="margin:0;padding:0;background-color:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f0f4f8;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table width="600" cellpadding="0" cellspacing="0" border="0"
+          style="max-width:600px;width:100%;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#2d1b1b 0%,#4a1f1f 100%);padding:32px 32px 28px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td>
+                    <p
+                      style="margin:0 0 6px;font-size:12px;color:#c49a9a;letter-spacing:1.5px;text-transform:uppercase;">
+                      ArXiv Daily Researcher</p>
+                    <h1 style="margin:0;font-size:26px;font-weight:700;color:#ffffff;letter-spacing:-0.3px;">每日论文报告</h1>
+                  </td>
+                  <td align="right" valign="top">
+                    <span
+                      style="display:inline-block;background-color:#e53e3e;color:#ffffff;font-size:13px;font-weight:700;padding:6px 14px;border-radius:20px;letter-spacing:0.5px;">✗
+                      运行失败</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td colspan="2" style="padding-top:16px;">
+                    <p style="margin:0;font-size:13px;color:#c49a9a;">
+                      <span>⏱</span>&nbsp;{timestamp}
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Error Alert -->
+          <tr>
+            <td style="padding:24px 32px 0;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                style="background-color:#fff5f5;border:1px solid #fed7d7;border-left:4px solid #e53e3e;border-radius:6px;">
+                <tr>
+                  <td style="padding:16px 18px;">
+                    <p
+                      style="margin:0 0 6px;font-size:13px;font-weight:700;color:#c53030;text-transform:uppercase;letter-spacing:0.5px;">
+                      错误详情</p>
+                    <p style="margin:0;font-size:14px;color:#742a2a;line-height:1.6;word-break:break-word;">
+                      {error_message}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Stats Banner -->
+          <tr>
+            <td style="padding:24px 32px 0;">
+              <h2
+                style="margin:0 0 14px;font-size:14px;font-weight:700;color:#1a1f36;text-transform:uppercase;letter-spacing:1px;border-left:3px solid #e53e3e;padding-left:10px;">
+                运行统计（截至失败）</h2>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                style="background-color:#fef9f9;border:1px solid #fed7d7;border-radius:8px;overflow:hidden;">
+                <tr>
+                  <td width="33.3%" align="center" style="padding:18px 8px;border-right:1px solid #fed7d7;">
+                    <p style="margin:0 0 4px;font-size:24px;font-weight:700;color:#c53030;">{total_fetched}</p>
+                    <p style="margin:0;font-size:11px;color:#9b6b6b;text-transform:uppercase;letter-spacing:0.8px;">已抓取
+                    </p>
+                  </td>
+                  <td width="33.3%" align="center" style="padding:18px 8px;border-right:1px solid #fed7d7;">
+                    <p style="margin:0 0 4px;font-size:24px;font-weight:700;color:#c53030;">{total_qualified}</p>
+                    <p style="margin:0;font-size:11px;color:#9b6b6b;text-transform:uppercase;letter-spacing:0.8px;">已及格
+                    </p>
+                  </td>
+                  <td width="33.3%" align="center" style="padding:18px 8px;">
+                    <p style="margin:0 0 4px;font-size:24px;font-weight:700;color:#c53030;">{total_analyzed}</p>
+                    <p style="margin:0;font-size:11px;color:#9b6b6b;text-transform:uppercase;letter-spacing:0.8px;">
+                      已深度分析</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Source Breakdown (if any data) -->
+          <tr>
+            <td style="padding:24px 32px 0;">
+              <h2
+                style="margin:0 0 14px;font-size:14px;font-weight:700;color:#1a1f36;text-transform:uppercase;letter-spacing:1px;border-left:3px solid #e53e3e;padding-left:10px;">
+                数据来源</h2>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                style="border-collapse:collapse;border:1px solid #fed7d7;border-radius:8px;overflow:hidden;">
+                <tr style="background-color:#fff5f5;">
+                  <th
+                    style="padding:10px 14px;text-align:left;font-size:12px;font-weight:600;color:#9b6b6b;text-transform:uppercase;letter-spacing:0.6px;border-bottom:1px solid #fed7d7;">
+                    来源</th>
+                  <th
+                    style="padding:10px 14px;text-align:center;font-size:12px;font-weight:600;color:#9b6b6b;text-transform:uppercase;letter-spacing:0.6px;border-bottom:1px solid #fed7d7;">
+                    抓取</th>
+                  <th
+                    style="padding:10px 14px;text-align:center;font-size:12px;font-weight:600;color:#9b6b6b;text-transform:uppercase;letter-spacing:0.6px;border-bottom:1px solid #fed7d7;">
+                    及格</th>
+                  <th
+                    style="padding:10px 14px;text-align:center;font-size:12px;font-weight:600;color:#9b6b6b;text-transform:uppercase;letter-spacing:0.6px;border-bottom:1px solid #fed7d7;">
+                    深度分析</th>
+                </tr>
+                {source_rows}
+              </table>
+            </td>
+          </tr>
+
+          <!-- Action Suggestion -->
+          <tr>
+            <td style="padding:24px 32px 0;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                style="background-color:#fffbeb;border:1px solid #fde68a;border-radius:6px;">
+                <tr>
+                  <td style="padding:14px 18px;">
+                    <p style="margin:0;font-size:13px;color:#92400e;">
+                      <strong>建议操作：</strong>请检查 <code
+                        style="background-color:#fef3c7;padding:2px 5px;border-radius:3px;font-size:12px;">logs/system.log</code>
+                      获取完整错误堆栈，并确认网络连接与 API Key 配置后重新运行。
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:24px 32px 32px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="border-top:1px solid #e8ebf0;padding-top:20px;">
+                    <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">
+                      此邮件由 <strong style="color:#5b6af0;">ArXiv Daily Researcher</strong> 自动发送 &nbsp;·&nbsp; 请勿直接回复
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+
+</html>

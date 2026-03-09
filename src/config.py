@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 1. 定义基础路径：获取项目根目录（src/ 的上级目录）
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+
 class LLMConfig(BaseModel):
     """
     语言模型配置类，定义单个LLM实例的参数。
@@ -19,10 +20,12 @@ class LLMConfig(BaseModel):
         model_name: 使用的具体模型名称，如gpt-4o
         temperature: 模型的温度参数，控制输出的随机性（0.3为较低随机性）
     """
+
     api_key: str = Field(..., description="LLM服务的API密钥")
     base_url: str = Field("https://api.openai.com/v1", description="LLM API的基础URL地址")
     model_name: str = Field("gpt-4o", description="要使用的模型名称标识")
     temperature: float = 0.3
+
 
 class Settings(BaseSettings):
     """
@@ -30,6 +33,7 @@ class Settings(BaseSettings):
 
     优先级：configs/config.json > .env文件 > 默认值
     """
+
     # ==================== 路径配置 ====================
     PROJECT_ROOT: Path = PROJECT_ROOT
     DATA_DIR: Path = PROJECT_ROOT / "data"
@@ -42,7 +46,7 @@ class Settings(BaseSettings):
     CONFIGS_DIR: Path = PROJECT_ROOT / "configs"
 
     # 报告模板目录
-    REPORT_TEMPLATES_DIR: Path = CONFIGS_DIR / "report_templates"
+    REPORT_TEMPLATES_DIR: Path = CONFIGS_DIR / "templates" / "reports"
 
     # 从Arxiv下载的临时PDF存储目录
     DOWNLOAD_DIR: Path = DATA_DIR / "downloaded_pdfs"
@@ -126,6 +130,14 @@ class Settings(BaseSettings):
     NOTIFY_ON_FAILURE: bool = True  # 失败时发送通知
     NOTIFY_ATTACH_REPORTS: bool = False  # 邮件是否附带报告文件
 
+    # 各渠道独立开关（需同时在 .env 中配置对应密钥才会生效）
+    NOTIFY_EMAIL_ENABLED: bool = True
+    NOTIFY_WECHAT_ENABLED: bool = True
+    NOTIFY_DINGTALK_ENABLED: bool = True
+    NOTIFY_TELEGRAM_ENABLED: bool = True
+    NOTIFY_SLACK_ENABLED: bool = True
+    NOTIFY_GENERIC_WEBHOOK_ENABLED: bool = True
+
     # ==================== 重试配置 ====================
     RETRY_MAX_ATTEMPTS: int = 3  # 最大重试次数
     RETRY_MIN_WAIT: int = 2  # 最小等待时间（秒），指数退避起始值
@@ -186,7 +198,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         env_nested_delimiter="__",  # 嵌套配置使用__分隔符，如CHEAP_LLM__API_KEY
-        extra="ignore"  # 忽略.env中未定义的额外参数
+        extra="ignore",  # 忽略.env中未定义的额外参数
     )
 
     def load_from_search_config(self, config_path: Optional[Path] = None) -> Dict[str, Any]:
@@ -209,7 +221,7 @@ class Settings(BaseSettings):
             return {}
 
         try:
-            with open(config_path, 'r', encoding='utf-8') as f:
+            with open(config_path, "r", encoding="utf-8") as f:
                 config = json5.load(f)  # 使用json5支持注释
 
             # 加载搜索设置
@@ -243,7 +255,9 @@ class Settings(BaseSettings):
                     self.PRIMARY_KEYWORD_WEIGHT = pk.get("weight", 1.0)
 
                 # Reference 提取配置
-                self.ENABLE_REFERENCE_EXTRACTION = kw_config.get("enable_reference_extraction", False)
+                self.ENABLE_REFERENCE_EXTRACTION = kw_config.get(
+                    "enable_reference_extraction", False
+                )
 
                 if "reference_keywords_config" in kw_config:
                     ref_cfg = kw_config["reference_keywords_config"]
@@ -252,11 +266,17 @@ class Settings(BaseSettings):
 
                     weight_dist = ref_cfg.get("weight_distribution", {})
                     if "high_importance" in weight_dist:
-                        self.REFERENCE_WEIGHT_HIGH = weight_dist["high_importance"].get("weight", 0.8)
+                        self.REFERENCE_WEIGHT_HIGH = weight_dist["high_importance"].get(
+                            "weight", 0.8
+                        )
                         self.REFERENCE_COUNT_HIGH = weight_dist["high_importance"].get("count", 3)
                     if "medium_importance" in weight_dist:
-                        self.REFERENCE_WEIGHT_MEDIUM = weight_dist["medium_importance"].get("weight", 0.5)
-                        self.REFERENCE_COUNT_MEDIUM = weight_dist["medium_importance"].get("count", 6)
+                        self.REFERENCE_WEIGHT_MEDIUM = weight_dist["medium_importance"].get(
+                            "weight", 0.5
+                        )
+                        self.REFERENCE_COUNT_MEDIUM = weight_dist["medium_importance"].get(
+                            "count", 6
+                        )
                     if "low_importance" in weight_dist:
                         self.REFERENCE_WEIGHT_LOW = weight_dist["low_importance"].get("weight", 0.3)
                         self.REFERENCE_COUNT_LOW = weight_dist["low_importance"].get("count", 3)
@@ -342,6 +362,17 @@ class Settings(BaseSettings):
                 self.NOTIFY_ATTACH_REPORTS = notif.get("attach_reports", False)
                 self.NOTIFICATION_TOP_N = notif.get("top_n", 5)
 
+                # 各渠道独立开关
+                channels = notif.get("channels", {})
+                self.NOTIFY_EMAIL_ENABLED = channels.get("email", {}).get("enabled", True)
+                self.NOTIFY_WECHAT_ENABLED = channels.get("wechat_work", {}).get("enabled", True)
+                self.NOTIFY_DINGTALK_ENABLED = channels.get("dingtalk", {}).get("enabled", True)
+                self.NOTIFY_TELEGRAM_ENABLED = channels.get("telegram", {}).get("enabled", True)
+                self.NOTIFY_SLACK_ENABLED = channels.get("slack", {}).get("enabled", True)
+                self.NOTIFY_GENERIC_WEBHOOK_ENABLED = channels.get("generic_webhook", {}).get(
+                    "enabled", True
+                )
+
             # 加载重试配置
             if "retry" in config:
                 retry_cfg = config["retry"]
@@ -384,6 +415,7 @@ class Settings(BaseSettings):
         except Exception as e:
             print(f"加载 configs/config.json 失败: {e}")
             import traceback
+
             traceback.print_exc()
             return {}
 
@@ -414,7 +446,9 @@ class Settings(BaseSettings):
         返回:
             float: 及格分数
         """
-        return self.PASSING_SCORE_BASE + self.PASSING_SCORE_WEIGHT_COEFFICIENT * total_keyword_weight
+        return (
+            self.PASSING_SCORE_BASE + self.PASSING_SCORE_WEIGHT_COEFFICIENT * total_keyword_weight
+        )
 
     def ensure_directories(self):
         """
@@ -444,13 +478,15 @@ class Settings(BaseSettings):
             return ""
 
         try:
-            with open(css_path, 'r', encoding='utf-8') as f:
+            with open(css_path, "r", encoding="utf-8") as f:
                 return f.read()
         except Exception as e:
             print(f"加载 CSS 样式文件 {css_name} 失败: {e}")
             return ""
 
-    def load_report_template(self, template_name: str = "basic_report_template.json") -> Dict[str, Any]:
+    def load_report_template(
+        self, template_name: str = "basic_report_template.json"
+    ) -> Dict[str, Any]:
         """
         加载报告模板配置。
 
@@ -467,11 +503,12 @@ class Settings(BaseSettings):
             return {}
 
         try:
-            with open(template_path, 'r', encoding='utf-8') as f:
+            with open(template_path, "r", encoding="utf-8") as f:
                 return json5.load(f)  # 使用json5支持注释
         except Exception as e:
             print(f"加载报告模板 {template_name} 失败: {e}")
             return {}
+
 
 # 实例化全局配置单例对象，应用程序全局共享
 settings = Settings()

@@ -84,7 +84,7 @@
 <td width="50%">
 
 ### 🔔 多渠道通知推送
-运行完成后自动发送含 Top-N 高分论文的结果通知，支持 **邮件**、**企业微信**、**钉钉**、**Telegram**、**Slack** 和自定义 Webhook，成功/失败分别可配。通知使用**可自定义 Markdown 模板**，错误（MinerU 过期、LLM 异常等）实时告警。
+运行完成后自动发送含 Top-N 高分论文的结果通知，支持 **邮件（HTML 精美模板）**、**企业微信**、**钉钉**、**Telegram**、**Slack** 和自定义 Webhook。各渠道可在 `config.json` 独立启用/禁用，邮件使用响应式 HTML 卡片，其余渠道使用可自定义 Markdown 模板。错误（MinerU 过期、LLM 异常等）实时告警。
 
 </td>
 </tr>
@@ -353,19 +353,39 @@ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/xxx
     "on_success": true,       // 成功时推送
     "on_failure": true,       // 失败时推送
     "top_n": 5,               // 通知中包含的高分论文数量
-    "attach_reports": false   // 是否将报告文件作为邮件附件
+    "attach_reports": false,  // 是否将报告文件作为邮件附件
+    "channels": {
+      "email":           { "enabled": true  },   // 各渠道独立开关
+      "wechat_work":     { "enabled": false },   // 需在 .env 中配置密钥才会生效
+      "dingtalk":        { "enabled": false },
+      "telegram":        { "enabled": false },
+      "slack":           { "enabled": false },
+      "generic_webhook": { "enabled": false }
+    }
   }
 }
 ```
 
 > [!TIP]
-> 只需在 `.env` 中填写哪些渠道的密钥，系统便自动启用对应渠道，未配置的渠道静默跳过。
+> 渠道生效条件：`channels.*.enabled = true` **且** `.env` 中填写了对应密钥。两个条件缺一则静默跳过，互不影响。
 > 通知内容包含运行摘要（总数/通过数/报告路径）及 Top-N 高分论文的标题、得分、TLDR 和原文链接。
-> 通知使用 Markdown 模板渲染，企业微信等平台支持富文本展示。
 
 ### 第三步：自定义通知模板（可选）
 
-通知消息通过 `configs/notification_templates/` 目录下的 Markdown 模板渲染，开箱即用，也可自行修改：
+**邮件**使用 `configs/templates/email/` 目录下的 **HTML 模板**（美观的卡片式布局，内嵌统计数据、论文列表与报告路径，支持主流邮件客户端）；**其他渠道**（企业微信、钉钉、Telegram、Slack）使用 `configs/templates/notifications/` 目录下的 **Markdown 模板**。所有模板均支持 `{变量名}` 动态替换，可按需自定义。
+
+**邮件 HTML 模板：**
+
+| 模板文件             | 用途                 |
+| :------------------- | :------------------- |
+| `success.html`       | 运行成功通知         |
+| `failure.html`       | 运行失败通知         |
+| `error_llm.html`     | LLM API 错误告警     |
+| `error_mineru.html`  | MinerU 服务错误告警  |
+| `error_network.html` | 外部服务连接错误告警 |
+| `error_generic.html` | 通用错误告警         |
+
+**其他渠道 Markdown 模板：**
 
 | 模板文件           | 用途                 | 触发条件                       |
 | :----------------- | :------------------- | :----------------------------- |
@@ -376,7 +396,7 @@ SLACK_WEBHOOK_URL=https://hooks.slack.com/services/xxx
 | `error_network.md` | 外部服务连接错误告警 | ArXiv/OpenAlex 等服务连接失败  |
 | `error_generic.md` | 通用错误告警         | 其他未分类的运行时错误         |
 
-模板中以 `# ` 开头的行为注释（不会发送），使用 `{变量名}` 引用动态数据。每个模板文件顶部有完整的可用变量列表和说明。
+模板文件顶部注释列出了所有可用变量及说明。
 
 ---
 
@@ -503,7 +523,7 @@ xychart-beta
 
 **HTML 报告**
 
-可选同步输出卡片式响应式 HTML 报告（`data/reports/html/[source]/`），布局现代，支持移动端。样式完全由 `configs/report_templates/html_report.css` 控制，修改 CSS 变量即可调整配色——无需改动任何 Python 代码。
+可选同步输出卡片式响应式 HTML 报告（`data/reports/html/[source]/`），布局现代，支持移动端。样式完全由 `configs/templates/reports/html_report.css` 控制，修改 CSS 变量即可调整配色——无需改动任何 Python 代码。
 
 **模板驱动渲染**
 
@@ -562,17 +582,25 @@ arxiv-daily-researcher/
 │
 ├── ⚙️  configs/
 │   ├── config.json                 # 项目主配置（JSON5，可写注释）
-│   ├── 📂 notification_templates/  # 通知消息模板（可自定义）
-│   │   ├── success.md              # 运行成功通知模板
-│   │   ├── failure.md              # 运行失败通知模板
-│   │   ├── error_mineru.md         # MinerU 错误告警模板
-│   │   ├── error_llm.md            # LLM API 错误告警模板
-│   │   ├── error_network.md        # 网络错误告警模板
-│   │   └── error_generic.md        # 通用错误告警模板
-│   └── 📂 report_templates/
-│       ├── basic_report_template.json
-│       ├── deep_analysis_template.json
-│       └── html_report.css         # HTML 报告样式（可自定义）
+│   └── 📂 templates/               # 所有模板文件（统一管理）
+│       ├── 📂 notifications/       # Markdown 通知模板（企业微信/钉钉/Telegram/Slack）
+│       │   ├── success.md          # 运行成功通知模板
+│       │   ├── failure.md          # 运行失败通知模板
+│       │   ├── error_mineru.md     # MinerU 错误告警模板
+│       │   ├── error_llm.md        # LLM API 错误告警模板
+│       │   ├── error_network.md    # 网络错误告警模板
+│       │   └── error_generic.md    # 通用错误告警模板
+│       ├── 📂 email/               # HTML 邮件通知模板
+│       │   ├── success.html        # 运行成功邮件模板
+│       │   ├── failure.html        # 运行失败邮件模板
+│       │   ├── error_llm.html      # LLM 错误告警邮件模板
+│       │   ├── error_mineru.html   # MinerU 错误告警邮件模板
+│       │   ├── error_network.html  # 网络错误告警邮件模板
+│       │   └── error_generic.html  # 通用错误告警邮件模板
+│       └── 📂 reports/             # 报告结构模板
+│           ├── basic_report_template.json
+│           ├── deep_analysis_template.json
+│           └── html_report.css     # HTML 报告样式（可自定义）
 │
 ├── 🖥️  scripts/
 │   ├── run_daily.sh                # Linux 本地运行脚本
@@ -774,7 +802,7 @@ arxiv-daily-researcher/
 
 ### HTML 报告自定义
 
-修改 `configs/report_templates/html_report.css` 中的 CSS 变量即可调整整体风格：
+修改 `configs/templates/reports/html_report.css` 中的 CSS 变量即可调整整体风格：
 
 ```css
 :root {
@@ -1029,6 +1057,19 @@ AI 标准化偶尔可能出现过度归并。处理方式：
 ---
 
 ## 📝 更新日志
+
+### ✅ v2.3 — 2026-03-09
+
+<details>
+<summary><b>✨ 新功能（2 项）</b></summary>
+
+1. **邮件通知 HTML 精美模板** — 邮件通知全面升级为 HTML 格式，告别 Markdown 在邮件客户端的排版问题。6 个模板（运行成功/失败 + 4 种错误告警）采用响应式卡片设计，含深色 Header、彩色状态徽章、统计数字看板、数据源表格、Top-N 论文卡片和报告路径列表，内嵌 inline CSS 兼容主流邮件客户端（Gmail、Outlook、QQ 邮件等）。纯文本版本作为备用同时发送，保证降级兼容。模板存放于 `configs/templates/email/`，支持完全自定义，其他渠道（企业微信/钉钉/Telegram/Slack）继续使用原有 Markdown 模板（`configs/templates/notifications/`），两套体系互不干扰（`src/notifications/notifier.py`）
+
+2. **通知渠道独立开关** — `configs/config.json` 中 `notifications.channels` 新增各渠道的 `enabled` 开关，可精细控制每个渠道的启用状态，无须再通过删除密钥来禁用特定渠道。渠道生效条件：`enabled: true` **且** `.env` 中填有对应密钥，两者缺一则静默跳过（`src/config.py`、`src/notifications/notifier.py`）
+
+</details>
+
+---
 
 ### ✅ v2.2 — 2026-03-03
 

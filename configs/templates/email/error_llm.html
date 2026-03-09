@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<!--
+  HTML 邮件通知模板 — LLM API 错误告警
+  可用变量（使用 {变量名} 引用）：
+    {timestamp}    — 发生时间
+    {llm_type}     — LLM 类型（CHEAP_LLM / SMART_LLM）
+    {model_name}   — 模型名称
+    {error_detail} — 错误详细描述
+    {suggestion}   — 建议的处理方式
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ArXiv Daily Researcher — LLM API 异常</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f0f4f8;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table width="600" cellpadding="0" cellspacing="0" border="0"
+          style="max-width:600px;width:100%;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+          <!-- Header -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#1a1f36 0%,#2d3561 100%);padding:28px 32px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td>
+                    <p style="margin:0 0 4px;font-size:11px;color:#8892b0;letter-spacing:1.5px;text-transform:uppercase;">ArXiv Daily Researcher</p>
+                    <h1 style="margin:0;font-size:22px;font-weight:700;color:#ffffff;">LLM API 异常告警</h1>
+                  </td>
+                  <td align="right" valign="middle">
+                    <span style="display:inline-block;background-color:#e53e3e;color:#ffffff;font-size:12px;font-weight:700;padding:5px 12px;border-radius:16px;">✗ API 错误</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td colspan="2" style="padding-top:10px;">
+                    <p style="margin:0;font-size:12px;color:#8892b0;">⏱ {timestamp}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- LLM Info -->
+          <tr>
+            <td style="padding:24px 32px 0;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                style="background-color:#f7f8fc;border:1px solid #e8ebf0;border-radius:8px;overflow:hidden;">
+                <tr>
+                  <td width="50%" align="center" style="padding:14px 12px;border-right:1px solid #e8ebf0;">
+                    <p style="margin:0 0 4px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.6px;">LLM 类型</p>
+                    <p style="margin:0;font-size:14px;font-weight:700;color:#1a1f36;">{llm_type}</p>
+                  </td>
+                  <td width="50%" align="center" style="padding:14px 12px;">
+                    <p style="margin:0 0 4px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.6px;">模型名称</p>
+                    <p style="margin:0;font-size:14px;font-weight:700;color:#1a1f36;">{model_name}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Error Detail -->
+          <tr>
+            <td style="padding:16px 32px 0;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                style="background-color:#fff5f5;border:1px solid #fed7d7;border-left:4px solid #e53e3e;border-radius:6px;">
+                <tr>
+                  <td style="padding:16px 18px;">
+                    <p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#c53030;text-transform:uppercase;letter-spacing:0.5px;">错误详情</p>
+                    <p style="margin:0;font-size:14px;color:#742a2a;line-height:1.6;word-break:break-word;">{error_detail}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Suggestion -->
+          <tr>
+            <td style="padding:16px 32px 0;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                style="background-color:#f0fff4;border:1px solid #9ae6b4;border-radius:6px;">
+                <tr>
+                  <td style="padding:14px 18px;">
+                    <p style="margin:0 0 6px;font-size:12px;font-weight:700;color:#276749;text-transform:uppercase;letter-spacing:0.5px;">处理建议</p>
+                    <p style="margin:0;font-size:14px;color:#22543d;line-height:1.6;">{suggestion}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Hint -->
+          <tr>
+            <td style="padding:14px 32px 0;">
+              <p style="margin:0;font-size:12px;color:#9ca3af;">请检查 <code style="background-color:#f3f4f6;padding:2px 5px;border-radius:3px;">.env</code> 中的 API Key 配置与账户余额，详细错误信息已记录到 <code style="background-color:#f3f4f6;padding:2px 5px;border-radius:3px;">logs/system.log</code>。</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 32px 28px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="border-top:1px solid #e8ebf0;padding-top:16px;">
+                    <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">
+                      此邮件由 <strong style="color:#5b6af0;">ArXiv Daily Researcher</strong> 自动发送 &nbsp;·&nbsp; 请勿直接回复
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
