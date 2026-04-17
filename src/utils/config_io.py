@@ -112,6 +112,7 @@ ENV_FIELDS = [
 SECTION_COMMENTS = {
     "search_settings": "Search Configuration",
     "data_sources": "Data Source Configuration",
+    "run_lock": "Run Lock Configuration",
     "target_domains": "ArXiv Target Domain Configuration",
     "keywords": "Keyword Configuration",
     "scoring_settings": "Scoring Configuration",
@@ -308,6 +309,7 @@ def build_config_dict(
     enabled_sources: Optional[List[str]] = None,
     journals: Optional[List[str]] = None,
     reports_by_source: bool = True,
+    arxiv_fetch_timeout_seconds: int = 180,
     domains: Optional[List[str]] = None,
     primary_keywords: Optional[List[str]] = None,
     primary_keyword_weight: float = 1.0,
@@ -351,6 +353,7 @@ def build_config_dict(
     retry_max_attempts: int = 3,
     retry_min_wait: int = 2,
     retry_max_wait: int = 30,
+    run_lock_max_age_hours: int = 12,
     log_rotation_type: str = "time",
     log_keep_days: int = 30,
     concurrency_enabled: bool = False,
@@ -383,6 +386,12 @@ def build_config_dict(
             "enabled": enabled_sources or ["arxiv"],
             "journals": journals or [],
             "reports_by_source": reports_by_source,
+            "arxiv": {
+                "fetch_timeout_seconds": arxiv_fetch_timeout_seconds,
+            },
+        },
+        "run_lock": {
+            "max_age_hours": run_lock_max_age_hours,
         },
         "target_domains": {
             "domains": domains or ["quant-ph"],
@@ -536,6 +545,11 @@ def flatten_config_dict(config: Dict[str, Any]) -> Dict[str, Any]:
     flat["enabled_sources"] = ds.get("enabled", ["arxiv"])
     flat["journals"] = ds.get("journals", [])
     flat["reports_by_source"] = ds.get("reports_by_source", True)
+    flat["arxiv_fetch_timeout_seconds"] = ds.get("arxiv", {}).get("fetch_timeout_seconds", 180)
+
+    # Run lock
+    rl = config.get("run_lock", {})
+    flat["run_lock_max_age_hours"] = rl.get("max_age_hours", 12)
 
     # Target domains
     td = config.get("target_domains", {})
@@ -707,3 +721,75 @@ def validate_smtp_connection(
         return True, "SMTP connection successful!"
     except Exception as e:
         return False, f"SMTP connection failed: {e}"
+
+
+def validate_mineru_connection(api_key: str) -> Tuple[bool, str]:
+    """
+    验证 MinerU API Token 有效性。
+
+    MinerU v4 API 没有独立的账户信息接口，通过向 /extract/task 提交一个
+    无效 URL（空字符串），根据返回的错误码区分"token 无效"与"参数错误"：
+    - HTTP 401/403 或 code=A0202/A0211 → Token 无效/已过期
+    - code=-500/-10002 等参数错误 → Token 有效（服务器认证通过，只是参数不合法）
+    - code=0 → 不应出现（空 URL 不会被接受）
+
+    参数:
+        api_key: MinerU API Token
+
+    返回:
+        Tuple[bool, str]: (是否成功, 详细信息)
+    """
+    if not api_key or api_key.strip() == "":
+        return False, "MinerU API Key 为空，请先填写 Token。"
+
+    try:
+        import urllib.request as urlreq
+        import urllib.error as urlerr
+        import json as _json
+
+        url = "https://mineru.net/api/v4/extract/task"
+        # 提交一个空 URL 的探测请求：token 有效时服务器会返回参数错误；token 无效时返回认证错误
+        payload = _json.dumps({"url": "", "model_version": "pipeline"}).encode("utf-8")
+        req = urlreq.Request(
+            url,
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {api_key.strip()}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        try:
+            with urlreq.urlopen(req, timeout=10) as resp:
+                body = resp.read().decode("utf-8")
+                data = _json.loads(body)
+        except urlerr.HTTPError as http_err:
+            if http_err.code in (401, 403):
+                return False, "❌ Token 无效或已过期（HTTP 401/403），请检查 MINERU_API_KEY。"
+            # 其他 HTTP 错误（如 400）也可能携带 JSON body
+            try:
+                body = http_err.read().decode("utf-8")
+                data = _json.loads(body)
+            except Exception:
+                return False, f"❌ 无法连接 MinerU API: HTTP {http_err.code}"
+
+        code = str(data.get("code", ""))
+        msg = data.get("msg") or data.get("message") or ""
+
+        # Token 认证失败的错误码
+        if code in ("A0202", "A0211"):
+            detail = "Token 已过期，请重新申请" if code == "A0211" else "Token 错误，请检查 MINERU_API_KEY"
+            return False, f"❌ {detail}（code={code}）"
+
+        # 参数错误（-500、-10002 等）说明 Token 本身是有效的，只是 URL 为空被拒
+        # code=0 理论上不应出现（空 URL 无法提交成功）
+        # 其他任何响应也视为"能够到达服务器且认证通过"
+        return True, (
+            "✅ MinerU Token 有效，API 连接正常。\n"
+            "（注：MinerU 暂未提供账户信息查询接口，无法显示过期时间和剩余额度）"
+        )
+
+    except Exception as e:
+        return False, f"⚠️ 无法连接 MinerU API: {e}"
+

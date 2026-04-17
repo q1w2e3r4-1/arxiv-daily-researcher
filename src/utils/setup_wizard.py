@@ -130,8 +130,14 @@ def section_llm(existing_env: dict) -> dict:
     section_header(1, "LLM Configuration", "Configure language model API connections")
 
     # Check if LLM is already configured
-    llm_required = ["CHEAP_LLM__API_KEY", "CHEAP_LLM__BASE_URL", "CHEAP_LLM__MODEL_NAME",
-                     "SMART_LLM__API_KEY", "SMART_LLM__BASE_URL", "SMART_LLM__MODEL_NAME"]
+    llm_required = [
+        "CHEAP_LLM__API_KEY",
+        "CHEAP_LLM__BASE_URL",
+        "CHEAP_LLM__MODEL_NAME",
+        "SMART_LLM__API_KEY",
+        "SMART_LLM__BASE_URL",
+        "SMART_LLM__MODEL_NAME",
+    ]
     if _section_already_configured(existing_env, llm_required, "LLM"):
         return {k: existing_env[k] for k in llm_required if k in existing_env}
 

@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     OPENALEX_EMAIL: str = ""  # OpenAlex 礼貌池邮箱（可选，提高速率限制）
     OPENALEX_API_KEY: str = ""  # OpenAlex API Key（可选，2026年2月后必需）
 
+    # ArXiv 抓取配置
+    ARXIV_FETCH_TIMEOUT_SECONDS: int = 180  # 单次抓取硬超时，避免无限阻塞
+
     # Semantic Scholar 配置
     ENABLE_SEMANTIC_SCHOLAR_TLDR: bool = True  # 是否获取AI生成的TLDR
     SEMANTIC_SCHOLAR_API_KEY: str = ""  # Semantic Scholar API Key（可选）
@@ -165,6 +168,9 @@ class Settings(BaseSettings):
     # ==================== 自动更新配置 ====================
     AUTO_UPDATE_ENABLED: bool = True  # 是否启用自动更新检查
 
+    # ==================== 运行锁配置 ====================
+    RUN_LOCK_MAX_AGE_HOURS: int = 12  # 锁超龄阈值（小时），超时将尝试回收卡死任务
+
     # ==================== 通知扩展 ====================
     NOTIFICATION_TOP_N: int = 5  # 通知中包含的Top-N高分论文数量
 
@@ -257,6 +263,12 @@ class Settings(BaseSettings):
                 self.ENABLED_SOURCES = ds_config.get("enabled", ["arxiv"])
                 self.TARGET_JOURNALS = ds_config.get("journals", [])
                 self.REPORTS_BY_SOURCE = ds_config.get("reports_by_source", True)
+                if "arxiv" in ds_config:
+                    arxiv_cfg = ds_config["arxiv"]
+                    if isinstance(arxiv_cfg, dict):
+                        self.ARXIV_FETCH_TIMEOUT_SECONDS = arxiv_cfg.get(
+                            "fetch_timeout_seconds", self.ARXIV_FETCH_TIMEOUT_SECONDS
+                        )
 
             # 加载关键词配置
             if "keywords" in config:
@@ -424,6 +436,13 @@ class Settings(BaseSettings):
             if "auto_update" in config:
                 au_cfg = config["auto_update"]
                 self.AUTO_UPDATE_ENABLED = au_cfg.get("enabled", True)
+
+            # 加载运行锁配置
+            if "run_lock" in config:
+                lock_cfg = config["run_lock"]
+                self.RUN_LOCK_MAX_AGE_HOURS = lock_cfg.get(
+                    "max_age_hours", self.RUN_LOCK_MAX_AGE_HOURS
+                )
 
             # 加载 token 追踪配置
             if "token_tracking" in config:

@@ -9,6 +9,7 @@ ArXiv 论文数据源
 
 import arxiv
 import logging
+import signal
 import time
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
@@ -17,6 +18,53 @@ from typing import List, Optional
 from .base_source import BasePaperSource, PaperMetadata
 
 logger = logging.getLogger(__name__)
+
+
+class _ArxivTimeoutError(TimeoutError):
+    """ArXiv 抓取超时异常。"""
+
+
+class ArxivFetchError(RuntimeError):
+    """
+    ArXiv 抓取失败异常。
+
+    当 ArXiv API 返回服务端错误（5xx）或其他致命错误，且经过多次重试仍无法获取任何论文时抛出。
+    不同于超时或速率限制（这些会自动重试），本异常表示操作已彻底失败。
+    """
+
+
+class _timeout_guard:
+    """使用 SIGALRM 对阻塞调用设置硬超时（Linux 主线程可用）。"""
+
+    def __init__(self, seconds: int):
+        self.seconds = max(0, int(seconds or 0))
+        self._old_handler = None
+        self._enabled = False
+
+    def __enter__(self):
+        if self.seconds <= 0:
+            return self
+        if not hasattr(signal, "SIGALRM"):
+            return self
+        try:
+            self._old_handler = signal.getsignal(signal.SIGALRM)
+
+            def _handler(signum, frame):
+                raise _ArxivTimeoutError(f"ArXiv 请求超时（>{self.seconds}s）")
+
+            signal.signal(signal.SIGALRM, _handler)
+            signal.alarm(self.seconds)
+            self._enabled = True
+        except Exception:
+            self._enabled = False
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._enabled:
+            signal.alarm(0)
+            if self._old_handler is not None:
+                signal.signal(signal.SIGALRM, self._old_handler)
+        return False
 
 
 class ArxivSource(BasePaperSource):
@@ -65,9 +113,24 @@ class ArxivSource(BasePaperSource):
         all_papers = {}
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
-        logger.info(f"[ArXiv] 开始抓取论文")
+        try:
+            from config import settings as _settings
+
+            fetch_timeout_seconds = int(
+                kwargs.get(
+                    "fetch_timeout_seconds",
+                    getattr(_settings, "ARXIV_FETCH_TIMEOUT_SECONDS", 180),
+                )
+            )
+        except Exception:
+            fetch_timeout_seconds = int(kwargs.get("fetch_timeout_seconds", 180))
+
+        logger.info("[ArXiv] 开始抓取论文")
         logger.info(f"  目标领域: {domains}")
         logger.info(f"  时间范围: 最近 {days} 天")
+
+        # 记录因严重错误失败的领域及其最后错误信息
+        failed_domains: list = []
 
         for domain in domains:
             query = f"cat:{domain}"
@@ -81,47 +144,65 @@ class ArxivSource(BasePaperSource):
             max_retries = 3
             retry_count = 0
             base_wait_time = 60
+            domain_failed = False
+            last_error_msg = ""
 
             while retry_count <= max_retries:
                 try:
                     count = 0
-                    for result in self.client.results(search):
-                        paper_id = result.get_short_id()
+                    with _timeout_guard(fetch_timeout_seconds):
+                        for result in self.client.results(search):
+                            paper_id = result.get_short_id()
 
-                        # 去重：跳过已处理的论文
-                        if self.is_processed(paper_id):
-                            continue
+                            # 去重：跳过已处理的论文
+                            if self.is_processed(paper_id):
+                                continue
 
-                        # 去重：跳过本次已抓取的论文
-                        if paper_id in all_papers:
-                            continue
+                            # 去重：跳过本次已抓取的论文
+                            if paper_id in all_papers:
+                                continue
 
-                        # 时间过滤
-                        if result.published < cutoff_date:
-                            continue
+                            # 时间过滤
+                            if result.published < cutoff_date:
+                                continue
 
-                        # 转换为统一格式
-                        metadata = PaperMetadata(
-                            paper_id=paper_id,
-                            title=result.title,
-                            authors=[author.name for author in result.authors],
-                            abstract=result.summary,
-                            published_date=result.published,
-                            url=result.entry_id,
-                            source="arxiv",
-                            pdf_url=result.pdf_url,
-                            doi=result.doi,
-                            categories=list(result.categories) if result.categories else [],
-                        )
-                        all_papers[paper_id] = metadata
-                        count += 1
+                            # 转换为统一格式
+                            metadata = PaperMetadata(
+                                paper_id=paper_id,
+                                title=result.title,
+                                authors=[author.name for author in result.authors],
+                                abstract=result.summary,
+                                published_date=result.published,
+                                url=result.entry_id,
+                                source="arxiv",
+                                pdf_url=result.pdf_url,
+                                doi=result.doi,
+                                categories=list(result.categories) if result.categories else [],
+                            )
+                            all_papers[paper_id] = metadata
+                            count += 1
 
                     logger.info(f"    领域 {domain}: 发现 {count} 篇新论文")
+                    domain_failed = False
                     break  # 成功则退出重试循环
 
                 except Exception as e:
                     error_msg = str(e)
-                    if "429" in error_msg or "Too Many Requests" in error_msg:
+                    last_error_msg = error_msg
+                    if isinstance(e, _ArxivTimeoutError):
+                        retry_count += 1
+                        if retry_count <= max_retries:
+                            wait_time = min(30 * retry_count, 90)
+                            logger.warning(
+                                f"    领域 {domain} 抓取超时（{fetch_timeout_seconds}s），"
+                                f"{wait_time} 秒后重试 ({retry_count}/{max_retries})"
+                            )
+                            time.sleep(wait_time)
+                        else:
+                            logger.error(f"    领域 {domain} 抓取失败: 多次超时")
+                            domain_failed = True
+                            break
+                    elif "429" in error_msg or "Too Many Requests" in error_msg:
                         retry_count += 1
                         if retry_count <= max_retries:
                             wait_time = base_wait_time * (2 ** (retry_count - 1))
@@ -129,13 +210,45 @@ class ArxivSource(BasePaperSource):
                             time.sleep(wait_time)
                         else:
                             logger.error(f"    领域 {domain} 抓取失败: 超过最大重试次数")
+                            domain_failed = True
                             break
                     else:
-                        logger.error(f"    领域 {domain} 抓取失败: {e}")
-                        break
+                        # 其他错误（包括 503 等服务端错误）：有限重试后仍失败则标记为严重错误
+                        retry_count += 1
+                        if retry_count <= max_retries:
+                            wait_time = min(30 * retry_count, 90)
+                            logger.warning(
+                                f"    领域 {domain} 抓取出错: {error_msg}，"
+                                f"{wait_time} 秒后重试 ({retry_count}/{max_retries})"
+                            )
+                            time.sleep(wait_time)
+                        else:
+                            logger.error(
+                                f"    领域 {domain} 抓取失败（已重试 {max_retries} 次）: {error_msg}"
+                            )
+                            domain_failed = True
+                            break
+
+            if domain_failed:
+                failed_domains.append((domain, last_error_msg))
 
         papers = list(all_papers.values())
         logger.info(f"[ArXiv] 总计发现 {len(papers)} 篇新论文")
+
+        # 若所有领域均因错误失败且没有抓取到任何论文，则抛出异常使上层正确报错
+        if failed_domains and len(papers) == 0:
+            domain_errors = "; ".join(f"{d}({e})" for d, e in failed_domains)
+            raise ArxivFetchError(
+                f"ArXiv 抓取失败，所有领域均未能获取论文。失败领域及错误: {domain_errors}"
+            )
+        elif failed_domains:
+            # 部分领域失败但其他领域成功获取了论文，只记录警告
+            domain_errors = "; ".join(f"{d}({e})" for d, e in failed_domains)
+            logger.warning(
+                f"[ArXiv] 部分领域抓取失败（{len(failed_domains)}/{len(domains)} 个），"
+                f"但已成功获取 {len(papers)} 篇论文。失败领域: {domain_errors}"
+            )
+
         return papers
 
     def search_by_keywords(
@@ -206,6 +319,13 @@ class ArxivSource(BasePaperSource):
         )
 
         papers = []
+        try:
+            from config import settings as _settings
+
+            fetch_timeout_seconds = int(getattr(_settings, "ARXIV_FETCH_TIMEOUT_SECONDS", 180))
+        except Exception:
+            fetch_timeout_seconds = 180
+
         max_retries = 3
         retry_count = 0
         base_wait_time = 60
@@ -213,36 +333,49 @@ class ArxivSource(BasePaperSource):
         while retry_count <= max_retries:
             papers = []  # 每次重试前清空，防止重复积累
             try:
-                for result in self.client.results(search):
-                    paper_id = result.get_short_id()
+                with _timeout_guard(fetch_timeout_seconds):
+                    for result in self.client.results(search):
+                        paper_id = result.get_short_id()
 
-                    metadata = PaperMetadata(
-                        paper_id=paper_id,
-                        title=result.title,
-                        authors=[author.name for author in result.authors],
-                        abstract=result.summary,
-                        published_date=result.published,
-                        url=result.entry_id,
-                        source="arxiv",
-                        pdf_url=result.pdf_url,
-                        doi=result.doi,
-                        categories=list(result.categories) if result.categories else [],
-                    )
-                    papers.append(metadata)
+                        metadata = PaperMetadata(
+                            paper_id=paper_id,
+                            title=result.title,
+                            authors=[author.name for author in result.authors],
+                            abstract=result.summary,
+                            published_date=result.published,
+                            url=result.entry_id,
+                            source="arxiv",
+                            pdf_url=result.pdf_url,
+                            doi=result.doi,
+                            categories=list(result.categories) if result.categories else [],
+                        )
+                        papers.append(metadata)
 
                 logger.info(f"[ArXiv] 关键词搜索完成: 共 {len(papers)} 篇论文")
                 break
 
             except Exception as e:
                 error_msg = str(e)
-                if "429" in error_msg or "Too Many Requests" in error_msg:
+                if isinstance(e, _ArxivTimeoutError):
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        wait_time = min(30 * retry_count, 90)
+                        logger.warning(
+                            f"  关键词搜索超时（{fetch_timeout_seconds}s），"
+                            f"{wait_time} 秒后重试 ({retry_count}/{max_retries})"
+                        )
+                        time.sleep(wait_time)
+                    else:
+                        logger.error("  关键词搜索失败: 多次超时")
+                        break
+                elif "429" in error_msg or "Too Many Requests" in error_msg:
                     retry_count += 1
                     if retry_count <= max_retries:
                         wait_time = base_wait_time * (2 ** (retry_count - 1))
                         logger.warning(f"  遇到速率限制，等待 {wait_time} 秒后重试...")
                         time.sleep(wait_time)
                     else:
-                        logger.error(f"  关键词搜索失败: 超过最大重试次数")
+                        logger.error("  关键词搜索失败: 超过最大重试次数")
                         break
                 else:
                     logger.error(f"  关键词搜索失败: {e}")

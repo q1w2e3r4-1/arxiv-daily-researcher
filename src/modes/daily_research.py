@@ -28,7 +28,7 @@ from config import settings
 from utils.logger import setup_logger
 from utils.token_counter import token_counter
 from agents import KeywordAgent, AnalysisAgent
-from sources import SearchAgent, PaperMetadata
+from sources import SearchAgent, PaperMetadata, ArxivFetchError
 from report.daily import Reporter
 from notifications import NotifierAgent, RunResult
 
@@ -215,9 +215,29 @@ class DailyResearchPipeline:
                 semantic_scholar_api_key=settings.SEMANTIC_SCHOLAR_API_KEY,
             )
 
-            papers_by_source: Dict[str, List[PaperMetadata]] = search_agent.fetch_all_papers(
-                days=settings.SEARCH_DAYS
-            )
+            try:
+                papers_by_source: Dict[str, List[PaperMetadata]] = search_agent.fetch_all_papers(
+                    days=settings.SEARCH_DAYS
+                )
+            except ArxivFetchError as afe:
+                # ArXiv 抓取彻底失败（多次重试后仍无法获取任何论文）
+                error_detail = str(afe)
+                logger.error(f"ArXiv 抓取失败，终止本次运行: {error_detail}")
+                fetch_fail_result = RunResult(
+                    run_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    success=False,
+                    error_message=f"ArXiv 抓取失败: {error_detail}",
+                )
+                if settings.ENABLE_NOTIFICATIONS:
+                    try:
+                        NotifierAgent().notify(fetch_fail_result)
+                        NotifierAgent().notify_error(
+                            "arxiv_fetch",
+                            f"ArXiv 论文抓取失败\n\n错误详情：{error_detail}\n\n建议检查网络连接及 ArXiv 服务状态。",
+                        )
+                    except Exception as ne:
+                        logger.warning(f"发送错误通知失败: {ne}")
+                return fetch_fail_result
 
             total_papers_count = sum(len(papers) for papers in papers_by_source.values())
 

@@ -420,6 +420,42 @@ class Reporter:
             return ""
         return html.escape(str(text))
 
+    @staticmethod
+    def _hm(text) -> str:
+        """
+        HTML 转义（保护 LaTeX 公式不被转义）。
+
+        将 $$...$$ 和 $...$ 用占位符替换，对其他内容做 HTML 转义，
+        再将占位符恢复为原始 LaTeX 内容，让 KaTeX 正确渲染。
+        """
+        import re
+        if text is None:
+            return ""
+        text = str(text)
+        # 提取所有 $$...$$ 和 $...$ 公式片段，用占位符替换
+        placeholders = []
+
+        def replace_display(m):
+            placeholders.append(m.group(0))
+            return f"\x00MATH{len(placeholders) - 1}\x00"
+
+        def replace_inline(m):
+            placeholders.append(m.group(0))
+            return f"\x00MATH{len(placeholders) - 1}\x00"
+
+        # 先处理块级公式（$$...$$），再处理行内公式（$...$）
+        text = re.sub(r'\$\$.+?\$\$', replace_display, text, flags=re.DOTALL)
+        text = re.sub(r'\$(?!\$).+?(?<!\$)\$', replace_inline, text)
+
+        # 对非公式部分做 HTML 转义
+        escaped = html.escape(text)
+
+        # 恢复占位符（将占位符中的原始 LaTeX 直接嵌入，不转义）
+        for i, placeholder_content in enumerate(placeholders):
+            escaped = escaped.replace(f"\x00MATH{i}\x00", placeholder_content)
+
+        return escaped
+
     def _generate_html_report(
         self,
         filepath: Path,
@@ -459,6 +495,23 @@ class Reporter:
         parts.append('<meta name="viewport" content="width=device-width,initial-scale=1">')
         parts.append(f"<title>{h(display_name)} Report {today}</title>")
         parts.append(f"<style>{self._get_report_css()}</style>")
+        # KaTeX 数学公式渲染
+        parts.append(
+            '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" '
+            'crossorigin="anonymous">'
+        )
+        parts.append(
+            '<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" '
+            'crossorigin="anonymous"></script>'
+        )
+        parts.append(
+            '<script defer '
+            'src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" '
+            'crossorigin="anonymous" '
+            'onload="renderMathInElement(document.body, {'
+            'delimiters: [{left:\'$$\',right:\'$$\',display:true},{left:\'$\',right:\'$\',display:false}]'
+            '})"></script>'
+        )
         parts.append("</head><body>")
 
         # 标题
@@ -526,21 +579,21 @@ class Reporter:
 
             # TLDR
             if sr.tldr and sr.tldr != "评分失败，无法生成摘要":
-                parts.append(f'<div class="tldr"><strong>TL;DR:</strong> {h(sr.tldr)}</div>')
+                parts.append(f'<div class="tldr"><strong>TL;DR:</strong> {self._hm(sr.tldr)}</div>')
 
             # 中文摘要（可折叠）
             abstract_cn = paper.get("abstract_cn", "")
             if abstract_cn:
                 parts.append("<details open><summary>摘要翻译</summary>")
                 parts.append(
-                    f'<div class="analysis-content"><p>{h(abstract_cn)}</p></div></details>'
+                    f'<div class="analysis-content"><p>{self._hm(abstract_cn)}</p></div></details>'
                 )
 
             # 摘要原文（可折叠）
             abstract = paper_meta.abstract if paper_meta else paper.get("abstract", "")
             if abstract:
                 parts.append("<details><summary>Abstract</summary>")
-                parts.append(f'<div class="analysis-content"><p>{h(abstract)}</p></div></details>')
+                parts.append(f'<div class="analysis-content"><p>{self._hm(abstract)}</p></div></details>')
 
             # 评分详情（可折叠）
             if sr.keyword_scores:
@@ -607,15 +660,15 @@ class Reporter:
                     if isinstance(value, list):
                         parts.append(f"<p><strong>{h(label)}:</strong></p><ul>")
                         for item in value:
-                            parts.append(f"<li>{h(str(item))}</li>")
+                            parts.append(f"<li>{self._hm(str(item))}</li>")
                         parts.append("</ul>")
                     elif isinstance(value, dict):
                         parts.append(f"<p><strong>{h(label)}:</strong></p><ul>")
                         for k, v in value.items():
-                            parts.append(f"<li><strong>{h(k)}:</strong> {h(str(v))}</li>")
+                            parts.append(f"<li><strong>{h(k)}:</strong> {self._hm(str(v))}</li>")
                         parts.append("</ul>")
                     else:
-                        parts.append(f"<p><strong>{h(label)}:</strong> {h(str(value))}</p>")
+                        parts.append(f"<p><strong>{h(label)}:</strong> {self._hm(str(value))}</p>")
                 parts.append("</div></details>")
 
             parts.append("</div>")  # card

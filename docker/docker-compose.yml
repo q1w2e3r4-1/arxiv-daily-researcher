@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: docker-arxiv-researcher:latest
+    image: arxiv-researcher:latest
     container_name: arxiv-daily-researcher
     restart: unless-stopped
 
@@ -20,23 +20,23 @@ services:
 
     # 容器运行参数
     environment:
-      - TZ=Asia/Shanghai # 时区
-      - CRON_SCHEDULE=0 8 * * * # 定时执行 (默认每天 8:00)
-      - RUN_ON_STARTUP=true # 容器启动时是否立即运行一次
-      - MODE=cron # cron=定时模式, run-once=单次运行
-      - SETUP_WIZARD=auto # auto=首次部署自动运行, true=强制运行, false=跳过
+      - TZ=Asia/Shanghai           # 时区
+      - CRON_SCHEDULE=0 8 * * *   # 定时执行 (默认每天 8:00)
+      - RUN_ON_STARTUP=true        # 容器启动时是否立即运行一次
+      - MODE=cron                  # cron=定时模式, run-once=单次运行
+      - SETUP_WIZARD=auto          # auto=首次部署自动运行, true=强制运行, false=跳过
 
     volumes:
-      # 持久化数据 (报告、历史、数据库)
+      # 持久化数据 (报告、历史、数据库；读写，WebUI 触发机制需要写锁文件)
       - ../data:/app/data
 
-      # 日志
+      # 日志 (读写，WebUI 运行管理 Tab 需要读取)
       - ../logs:/app/logs
 
-      # 配置文件 (读写挂载，setup wizard 需要写入)
+      # 配置文件 (读写，setup wizard 需要写入)
       - ../configs:/app/configs
 
-      # .env 文件 (读写挂载，setup wizard 需要写入)
+      # .env 文件 (读写，setup wizard 需要写入)
       - ../.env:/app/.env
 
     # 资源限制 (适配 NAS 等低配设备)
@@ -63,12 +63,13 @@ services:
         max-file: "3"
 
   # ==================== Config Panel (Web UI) ====================
-  # 启动方式: docker compose --profile webui up -d config-panel
+  # 启动方式: docker compose --profile webui up -d
+  # 面板通过共享卷向主研究容器写触发文件来触发立即运行（无需 Docker socket）
   config-panel:
     build:
       context: ..
       dockerfile: docker/Dockerfile.webui
-    image: docker-arxiv-config-panel:latest
+    image: arxiv-config-panel:latest
     container_name: arxiv-config-panel
     restart: unless-stopped
     profiles:
@@ -84,19 +85,21 @@ services:
       - TZ=Asia/Shanghai
 
     volumes:
-      # 配置文件 (读写挂载，面板需要写入)
+      # 配置文件 (读写，面板需要写入)
       - ../configs:/app/configs
-      # .env 文件 (读写挂载)
+      # .env 文件 (读写)
       - ../.env:/app/.env
       # .env.example 模板 (只读)
       - ../.env.example:/app/.env.example:ro
-      # 报告目录 (只读，报告查看器需要)
-      - ../data:/app/data:ro
+      # 数据目录 (读写；报告查看 + 运行管理触发文件需要)
+      - ../data:/app/data
+      # 日志目录 (只读；运行管理 Tab 查看日志)
+      - ../logs:/app/logs
 
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 300M
         reservations:
           memory: 128M
 
@@ -105,7 +108,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 15s
+      start_period: 20s
 
     logging:
       driver: "json-file"

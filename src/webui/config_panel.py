@@ -31,6 +31,7 @@ from utils.config_io import (
 
 from webui.styles import CUSTOM_CSS
 from webui.tabs import llm, search, keywords, scoring, notifications, advanced, reports
+from webui.tabs import run_manager, trend_runner
 from webui.i18n import t
 
 
@@ -65,7 +66,7 @@ def load_config():
 
 
 def do_save():
-    """Save all configuration to disk."""
+    """保存所有配置到磁盘。"""
     env_values = load_env()
     config_values = load_config()
 
@@ -73,7 +74,7 @@ def do_save():
     env_updates = {}
     config_updates = {}
 
-    # LLM tab -> env only
+    # API tab (原 LLM tab) -> env only
     env_updates.update(llm.collect(env_values, config_values))
 
     # Search tab -> config only
@@ -92,6 +93,9 @@ def do_save():
 
     # Advanced tab -> config only
     config_updates.update(advanced.collect(env_values, config_values))
+
+    # Trend Runner tab -> config only（趋势分析配置）
+    config_updates.update(trend_runner.collect(env_values, config_values))
 
     # Merge and write env
     merged_env = {**env_values, **env_updates}
@@ -143,7 +147,7 @@ with st.sidebar:
         st.session_state["lang"] = "en" if st.session_state["lang"] == "zh" else "zh"
         st.rerun()
 
-    st.caption("v3.0 | Powered by Streamlit")
+    st.caption("v3.1 | Powered by Streamlit")
 
 
 # ==================== Main Content ====================
@@ -159,35 +163,44 @@ st.markdown(
 env_values = load_env()
 config_values = load_config()
 
-# Render tabs
+# Render tabs（9 个 Tab）
 tab_labels = [
-    t("tab_llm"),
-    t("tab_search"),
-    t("tab_keywords"),
-    t("tab_scoring"),
-    t("tab_notifications"),
-    t("tab_advanced"),
-    t("tab_reports"),
+    t("tab_run_manager"),    # 运行管理
+    t("tab_reports"),        # 报告查看
+    t("tab_trend_runner"),   # 趋势分析
+    t("tab_keywords"),       # 关键词
+    t("tab_search"),         # 搜索与数据源
+    t("tab_scoring"),        # 评分
+    t("tab_notifications"),  # 通知
+    t("tab_llm"),            # API
+    t("tab_advanced"),       # 高级设置
 ]
 tabs = st.tabs(tab_labels)
 
 with tabs[0]:
-    llm.render(env_values, config_values)
+    run_manager.render(env_values, config_values)
 
 with tabs[1]:
-    search.render(env_values, config_values)
+    reports.render(env_values, config_values)
 
 with tabs[2]:
-    keywords.render(env_values, config_values)
+    trend_runner.render(env_values, config_values)
 
 with tabs[3]:
-    scoring.render(env_values, config_values)
+    keywords.render(env_values, config_values)
 
 with tabs[4]:
-    notifications.render(env_values, config_values)
+    search.render(env_values, config_values)
 
 with tabs[5]:
-    advanced.render(env_values, config_values)
+    scoring.render(env_values, config_values)
 
 with tabs[6]:
-    reports.render(env_values, config_values)
+    notifications.render(env_values, config_values)
+
+with tabs[7]:
+    llm.render(env_values, config_values)
+
+with tabs[8]:
+    advanced.render(env_values, config_values)
+

@@ -86,6 +86,38 @@ if [ "$RUN_ON_STARTUP" = "true" ]; then
     echo ""
 fi
 
+# ==================== WebUI Trigger File Watcher ====================
+# The Streamlit config panel (WebUI container) can request a run by writing
+# a trigger file to the shared volume.  This background loop picks it up.
+TRIGGER_FILE="/app/data/run/webui_run_trigger.flag"
+mkdir -p /app/data/run
+
+trigger_watcher() {
+    echo "[trigger-watcher] Started. Polling $TRIGGER_FILE every 5s..."
+    while true; do
+        if [ -f "$TRIGGER_FILE" ]; then
+            # Read mode from trigger file
+            RUN_MODE=$(cat "$TRIGGER_FILE" 2>/dev/null | tr -d '[:space:]')
+            [ -z "$RUN_MODE" ] && RUN_MODE="daily_research"
+            rm -f "$TRIGGER_FILE"
+            echo "[trigger-watcher] Trigger received! mode=$RUN_MODE"
+
+            # Use manual_ prefix to distinguish WebUI-triggered runs from cron runs
+            LOG_FILE="/app/logs/manual_$(date +%Y%m%d_%H%M%S).log"
+            PID_FILE="/app/data/run/webui_triggered.pid"
+
+            # Launch python directly (no subshell) so $! is the actual Python PID
+            cd /app && python main.py --mode "$RUN_MODE" >> "$LOG_FILE" 2>&1 &
+            MAIN_PID=$!
+            echo "$MAIN_PID" > "$PID_FILE"
+            echo "[trigger-watcher] Launched PID=$MAIN_PID  log=$LOG_FILE"
+        fi
+        sleep 5
+    done
+}
+
+trigger_watcher &
+
 # Start cron daemon
 echo "Starting cron daemon..."
 cron

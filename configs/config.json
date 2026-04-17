@@ -3,7 +3,7 @@
   // Search Configuration
   // ==================================================
   "search_settings": {
-    "search_days": 7,
+    "search_days": 14,
     "max_results": 100,
     "max_results_per_source": {}
   },
@@ -13,11 +13,20 @@
   // ==================================================
   "data_sources": {
     "enabled": [
-      "arxiv",
-      "prl"
+      "arxiv"
     ],
     "journals": [],
-    "reports_by_source": true
+    "reports_by_source": true,
+    "arxiv": {
+      "fetch_timeout_seconds": 180
+    }
+  },
+
+  // ==================================================
+  // Run Lock Configuration
+  // ==================================================
+  "run_lock": {
+    "max_age_hours": 12
   },
 
   // ==================================================
@@ -72,8 +81,8 @@
       "bonus_points": 5.0
     },
     "passing_score_formula": {
-      "base_score": 5.0,
-      "weight_coefficient": 3.0
+      "base_score": 1.5,
+      "weight_coefficient": 2.5
     },
     "include_all_in_report": true
   },
@@ -125,7 +134,7 @@
     "enabled": true,
     "on_success": true,
     "on_failure": true,
-    "attach_reports": false,
+    "attach_reports": true,
     "top_n": 5,
     "channels": {
       "email": {
@@ -153,9 +162,9 @@
   // Retry Configuration
   // ==================================================
   "retry": {
-    "max_attempts": 3,
+    "max_attempts": 5,
     "min_wait": 2,
-    "max_wait": 30
+    "max_wait": 60
   },
 
   // ==================================================
@@ -179,7 +188,7 @@
   // ==================================================
   "pdf_parser": {
     "mode": "mineru",
-    "mineru_model_version": "pipeline",
+    "mineru_model_version": "vlm",
     "poll_interval": 3,
     "poll_timeout": 300
   },
@@ -210,7 +219,7 @@
   // ==================================================
   "trend_research": {
     "default_date_range_days": 365,
-    "max_results": 200,
+    "max_results": 500,
     "sort_order": "ascending",
     "report_position": "end",
     "generate_tldr": true,

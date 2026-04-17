@@ -9,7 +9,7 @@
 """
 
 from .base_source import BasePaperSource, PaperMetadata
-from .arxiv_source import ArxivSource
+from .arxiv_source import ArxivSource, ArxivFetchError
 from .openalex_source import OpenAlexSource
 from .semantic_scholar_enricher import SemanticScholarEnricher
 from .search_agent import SearchAgent
@@ -18,6 +18,7 @@ __all__ = [
     "BasePaperSource",
     "PaperMetadata",
     "ArxivSource",
+    "ArxivFetchError",
     "OpenAlexSource",
     "SemanticScholarEnricher",
     "SearchAgent",

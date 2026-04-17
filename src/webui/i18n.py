@@ -47,13 +47,15 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "中文",
     },
     # Tab labels
-    "tab_llm": {"zh": "LLM", "en": "LLM"},
+    "tab_llm": {"zh": "API", "en": "API"},
     "tab_search": {"zh": "搜索与数据源", "en": "Search & Sources"},
     "tab_keywords": {"zh": "关键词", "en": "Keywords"},
     "tab_scoring": {"zh": "评分", "en": "Scoring"},
     "tab_notifications": {"zh": "通知", "en": "Notifications"},
     "tab_advanced": {"zh": "高级设置", "en": "Advanced"},
     "tab_reports": {"zh": "报告查看", "en": "Reports"},
+    "tab_run_manager": {"zh": "运行管理", "en": "Run Manager"},
+    "tab_trend_runner": {"zh": "趋势分析", "en": "Trend Analysis"},
     # ── llm.py ───────────────────────────────────────────────────────────
     "cheap_llm_title": {
         "zh": "低成本 LLM (CHEAP_LLM)",
@@ -106,9 +108,132 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "OpenAlex API Key",
     },
     "mineru_api_key_label": {
-        "zh": "MinerU API Key（PDF 解析）",
-        "en": "MinerU API Key (PDF parsing)",
+        "zh": "MinerU API Key",
+        "en": "MinerU API Key",
     },
+    "mineru_section_title": {
+        "zh": "MinerU PDF 解析 API",
+        "en": "MinerU PDF Parsing API",
+    },
+    "mineru_section_hint": {
+        "zh": "MinerU 提供高质量云端 PDF 解析，Token 每 3 个月过期。点击「测试」可查看颟度余量和过期时间。",
+        "en": "MinerU provides high-quality cloud PDF parsing. Token expires every 3 months. Click Test to check quota and expiry.",
+    },
+    "mineru_key_help": {
+        "zh": "登录 mineru.net 获取 API Token",
+        "en": "Get your API token from mineru.net",
+    },
+    "test_mineru_btn": {"zh": "测试 MinerU 连接", "en": "Test MinerU Connection"},
+    "testing_mineru": {"zh": "连接 MinerU 中...", "en": "Connecting to MinerU..."},
+    "mineru_expire_note": {
+        "zh": "点击测试可查看 Token 过期日期和剩余颟度",
+        "en": "Click Test to check token expiry and remaining quota",
+    },
+    # ── reports.py 导航按钞 ──
+    "report_prev_day": {"zh": "← 前一天", "en": "← Prev Day"},
+    "report_next_day": {"zh": "后一天 →", "en": "Next Day →"},
+    "report_show_non_arxiv": {"zh": "显示非 ArXiv 来源", "en": "Show non-ArXiv sources"},
+    "report_no_prev": {"zh": "已是最早的报告", "en": "No earlier reports"},
+    "report_no_next": {"zh": "已是最新的报告", "en": "No newer reports"},
+    # ── run_manager.py ──
+    "run_manager_title": {"zh": "运行管理", "en": "Run Manager"},
+    "run_now_section_title": {"zh": "立即运行每日研究", "en": "Run Daily Research Now"},
+    "run_now_btn": {"zh": "立即运行", "en": "Run Now"},
+    "run_now_hint": {
+        "zh": "立即执行一次每日研究流水线（包含抓取论文、评分、分析和发送通知）。",
+        "en": "Immediately run the daily research pipeline (fetch, score, analyze, notify).",
+    },
+    "stop_all_btn": {"zh": "停止所有进程", "en": "Stop All Processes"},
+    "stop_all_hint": {
+        "zh": "向所有正在运行的每日研究和趋势分析进程发送停止信号。",
+        "en": "Send stop signal to all running daily research and trend analysis processes.",
+    },
+    "run_log_title": {"zh": "运行日志", "en": "Run Logs"},
+    "no_logs_found": {"zh": "暂未找到日志文件。", "en": "No log files found."},
+    "pid_killed": {"zh": "已向进程 {pid} 发送停止信号", "en": "Sent stop signal to process {pid}"},
+    "no_running_process": {
+        "zh": "未检测到正在运行的进程。",
+        "en": "No running processes detected.",
+    },
+    "process_started": {
+        "zh": "进程已启动，日志将实时生成。",
+        "en": "Process started. Logs will appear shortly.",
+    },
+    # run_manager 状态标签
+    "rm_status_title": {"zh": "当前运行状态", "en": "Current Run Status"},
+    "rm_no_running_tasks": {
+        "zh": "当前无正在运行的任务（无锁/PID 文件）。",
+        "en": "No running tasks (no lock/PID files).",
+    },
+    "rm_status_running": {"zh": "运行中", "en": "Running"},
+    "rm_status_stopped": {"zh": "已停止（文件未清除）", "en": "Stopped (file not cleaned)"},
+    "rm_no_pid": {"zh": "无 PID", "en": "No PID"},
+    "rm_started_at": {"zh": "启动于", "en": "Started at"},
+    "rm_process_running_label": {
+        "zh": "面板触发的进程正在运行",
+        "en": "Panel-triggered process is running",
+    },
+    "rm_no_panel_process": {
+        "zh": "当前无面板触发的进程运行",
+        "en": "No panel-triggered process running",
+    },
+    # run_manager Docker 模式
+    "rm_docker_exec_hint": {
+        "zh": "Docker 模式：通过 docker exec 在容器 {container} 中触发每日研究",
+        "en": "Docker mode: triggers daily research via docker exec in container {container}",
+    },
+    "rm_docker_no_sock_warning": {
+        "zh": (
+            "⚠️ Docker 模式（无 Docker Socket）：无法直接启动任务。\n\n"
+            "请在宿主机终端运行：\n"
+            "`docker exec {container} python main.py --mode daily_research`"
+        ),
+        "en": (
+            "⚠️ Docker mode (no Docker socket): cannot start tasks directly.\n\n"
+            "Run on host terminal:\n"
+            "`docker exec {container} python main.py --mode daily_research`"
+        ),
+    },
+    "rm_docker_log_hint": {
+        "zh": "（Docker 模式：确认 `logs/` 目录已通过卷挂载共享到此容器）",
+        "en": "(Docker mode: ensure `logs/` is mounted into this container via a volume)",
+    },
+    # run_manager 日志选择器
+    "rm_select_log_label": {"zh": "选择日志文件", "en": "Select log file"},
+    "rm_select_log_help": {
+        "zh": "按分类显示所有日志文件，括号内为最后修改时间",
+        "en": "All log files grouped by type. Bracket shows last modified time.",
+    },
+    "rm_log_group_daily": {"zh": "每日研究日志", "en": "Daily Research"},
+    "rm_log_group_trend": {"zh": "趋势分析日志", "en": "Trend Analysis"},
+    "rm_log_group_other": {"zh": "其他日志", "en": "Other"},
+    "rm_open_log_btn": {"zh": "打开", "en": "Open"},
+    "rm_refresh_log_btn": {"zh": "刷新", "en": "Refresh"},
+    "rm_close_log_btn": {"zh": "关闭", "en": "Close"},
+    # ── trend_runner.py ──
+    "trend_runner_title": {"zh": "趋势分析", "en": "Trend Analysis"},
+    "trend_keywords_label": {"zh": "搜索关键词", "en": "Search Keywords"},
+    "trend_keywords_help": {
+        "zh": '多个关键词用空格分隔，引号包裹短语，如: quantum error correction "surface code"',
+        "en": 'Multiple keywords separated by spaces. Quote phrases, e.g.: quantum error correction "surface code"',
+    },
+    "trend_date_from": {"zh": "起始日期", "en": "Date From"},
+    "trend_date_to": {"zh": "截止日期", "en": "Date To"},
+    "trend_categories_label": {
+        "zh": "ArXiv 分类过滤（可选）",
+        "en": "ArXiv Categories Filter (optional)",
+    },
+    "trend_categories_help": {
+        "zh": "多个分类用空格分隔，如: quant-ph cs.AI",
+        "en": "Multiple categories separated by spaces, e.g.: quant-ph cs.AI",
+    },
+    "trend_run_btn": {"zh": "开始趋势分析", "en": "Start Trend Analysis"},
+    "trend_config_title": {"zh": "趋势分析配置", "en": "Trend Analysis Configuration"},
+    "trend_sort_label": {"zh": "时间排序", "en": "Time Sort Order"},
+    "trend_generate_tldr_label": {"zh": "生成 TLDR", "en": "Generate TLDR"},
+    "trend_tldr_batch_label": {"zh": "TLDR 批次并发数", "en": "TLDR Batch Size"},
+    "trend_skills_label": {"zh": "启用的分析技能", "en": "Enabled Analysis Skills"},
+    "trend_output_formats_label": {"zh": "输出格式", "en": "Output Formats"},
     # ── search.py ────────────────────────────────────────────────────────
     "search_settings_title": {"zh": "搜索设置", "en": "Search Settings"},
     "search_settings_hint": {
@@ -134,6 +259,14 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     "reports_by_source_help": {
         "zh": "为每个数据源创建独立报告目录",
         "en": "Create separate report directories for each data source",
+    },
+    "arxiv_fetch_timeout_label": {
+        "zh": "ArXiv 抓取超时（秒）",
+        "en": "ArXiv fetch timeout (seconds)",
+    },
+    "arxiv_fetch_timeout_help": {
+        "zh": "单次 ArXiv 抓取硬超时，超时后自动重试，避免任务长时间卡住",
+        "en": "Hard timeout for one ArXiv fetch. Retries on timeout to avoid stuck runs.",
     },
     "arxiv_domains_title": {"zh": "ArXiv 目标分类", "en": "ArXiv Target Domains"},
     "arxiv_domains_hint": {
@@ -340,7 +473,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "zh": "推荐：3-5，过高可能触发速率限制。",
         "en": "Recommended: 3-5. Higher values may trigger rate limits.",
     },
-    "reports_title": {"zh": "报告", "en": "Reports"},
+    "advanced_reports_title": {"zh": "报告", "en": "Reports"},
     "html_reports_label": {"zh": "HTML 报告", "en": "HTML reports"},
     "token_tracking_label": {"zh": "Token 用量追踪", "en": "Token tracking"},
     "auto_update_label": {"zh": "自动更新检查", "en": "Auto-update check"},
@@ -388,6 +521,17 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     "max_retries_label": {"zh": "最大重试次数", "en": "Max retry attempts"},
     "min_wait_label": {"zh": "最短等待（秒）", "en": "Min wait (seconds)"},
     "max_wait_label": {"zh": "最长等待（秒）", "en": "Max wait (seconds)"},
+    "run_lock_max_age_label": {
+        "zh": "运行锁超龄回收阈值（小时）",
+        "en": "Run-lock stale recovery threshold (hours)",
+    },
+    "run_lock_max_age_help": {
+        "zh": "同一任务持续运行超过该时长将尝试终止并回收锁",
+        "en": (
+            "If a task runs longer than this, the lock recovery will try to "
+            "terminate and reclaim."
+        ),
+    },
     "log_rotation_label": {"zh": "日志轮转方式", "en": "Log rotation"},
     "log_retention_label": {"zh": "日志保留天数", "en": "Log retention (days)"},
     "trend_research_title": {
@@ -446,7 +590,10 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     "reports_title": {"zh": "报告查看", "en": "Report Viewer"},
     "reports_hint": {
         "zh": "浏览并在线预览所有已生成的 HTML 报告，包括每日研究报告、趋势分析报告和关键词趋势报告。",
-        "en": "Browse and preview all generated HTML reports: daily research, trend analysis, and keyword trend.",
+        "en": (
+            "Browse and preview all generated HTML reports: daily research, trend "
+            "analysis, and keyword trend."
+        ),
     },
     "reports_refresh": {"zh": "刷新文件列表", "en": "Refresh File List"},
     "reports_empty": {
@@ -467,6 +614,105 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     "reports_mtime": {"zh": "生成时间", "en": "Generated"},
     "reports_height": {"zh": "预览高度", "en": "Preview Height"},
     "reports_load_error": {"zh": "报告加载失败", "en": "Failed to load report"},
+    # ── trend_runner.py 新增 i18n ──
+    "tr_section_params": {"zh": "分析参数", "en": "Analysis Parameters"},
+    "tr_section_run_control": {"zh": "运行控制", "en": "Run Control"},
+    "tr_keywords_placeholder": {
+        "zh": '例如: quantum error correction "surface code"',
+        "en": 'e.g. quantum error correction "surface code"',
+    },
+    "tr_categories_placeholder": {
+        "zh": "例如: quant-ph cs.AI（留空则不过滤）",
+        "en": "e.g. quant-ph cs.AI (leave empty for no filter)",
+    },
+    "tr_default_date_range_days_label": {
+        "zh": "默认时间范围（天）",
+        "en": "Default date range (days)",
+    },
+    "tr_default_date_range_days_help": {
+        "zh": "保存后作为新建分析的默认时间范围",
+        "en": "Saved as the default date range for new analyses",
+    },
+    "tr_stop_btn_label": {"zh": "⏹ 停止趋势分析", "en": "⏹ Stop Trend Analysis"},
+    "tr_locks_found": {
+        "zh": "当前有 {n} 个趋势分析任务锁文件存在（可能正在运行或异常退出）。",
+        "en": "{n} trend analysis lock file(s) found (may be running or crashed).",
+    },
+    "tr_stop_signal_sent": {
+        "zh": "已向趋势分析进程 PID={pid} 发送停止信号 ({name})",
+        "en": "Sent stop signal to trend analysis process PID={pid} ({name})",
+    },
+    "tr_stop_failed": {"zh": "停止 PID={pid} 失败: {err}", "en": "Failed to stop PID={pid}: {err}"},
+    "tr_no_running_trend": {
+        "zh": "未检测到正在运行的趋势分析进程。",
+        "en": "No running trend analysis processes detected.",
+    },
+    "tr_err_no_keywords": {"zh": "请输入搜索关键词。", "en": "Please enter search keywords."},
+    "tr_err_date_range": {
+        "zh": "起始日期不能晚于截止日期。",
+        "en": "Start date cannot be later than end date.",
+    },
+    "tr_started": {
+        "zh": "趋势分析已启动！PID={pid}，请在「报告查看」Tab 中查看结果。",
+        "en": "Trend analysis started! PID={pid}. Check the Reports tab for results.",
+    },
+    "tr_start_failed": {"zh": "启动失败: {err}", "en": "Failed to start: {err}"},
+    # skill labels (also fix time_evolution and key_researchers missing earlier)
+    "skill_time_evolution": {"zh": "技术演进时间线", "en": "Technology Evolution Timeline"},
+    "skill_key_researchers": {"zh": "关键研究者分析", "en": "Key Researchers Analysis"},
+    # run_manager 触发文件机制新 key
+    "rm_docker_trigger_hint": {
+        "zh": "Docker 模式：通过触发文件与主研究容器通信（安全，无需 Docker socket）",
+        "en": "Docker mode: communicates with the researcher container via trigger file (no Docker socket needed)",
+    },
+    "rm_trigger_pending": {
+        "zh": "已发送运行请求，等待主研究容器响应（最多 10 秒）...",
+        "en": "Run request sent, waiting for researcher container to respond (up to 10s)...",
+    },
+    "rm_trigger_pending_short": {
+        "zh": "等待主容器响应中...",
+        "en": "Waiting for main container...",
+    },
+    "rm_trigger_sent": {
+        "zh": "✅ 已发送运行请求！主研究容器将在 5-10 秒内启动任务，日志将在「运行日志」区实时更新。",
+        "en": "✅ Run request sent! The researcher container will start the task within 5-10 seconds. Check the Run Logs section.",
+    },
+    "rm_trigger_failed": {
+        "zh": "❌ 写入触发文件失败",
+        "en": "❌ Failed to write trigger file",
+    },
+    "rm_already_running_warn": {
+        "zh": "检测到已有一个进程在运行（PID={pid}），请先停止后再启动。",
+        "en": "A process is already running (PID={pid}). Please stop it before starting a new one.",
+    },
+    # ── run_manager v2 新增 key ──
+    "rm_trigger_stale": {
+        "zh": "触发文件已存在 {n} 秒仍未被主容器消费，可能主研究容器未运行。请检查后清除。",
+        "en": "Trigger file has been pending for {n}s without being consumed. The researcher container may not be running. Please check and clear it.",
+    },
+    "rm_clear_trigger_btn": {"zh": "🗑 清除触发文件", "en": "🗑 Clear Trigger File"},
+    "rm_trigger_sent_short": {
+        "zh": "已发送运行请求！主容器将在 5-10s 内启动",
+        "en": "Run request sent! Container will start within 5-10s",
+    },
+    "rm_last_run_at": {"zh": "上次运行完成", "en": "Last run completed"},
+    "rm_clean_lock_btn": {"zh": "清理", "en": "Clean"},
+    "rm_clean_lock_help": {
+        "zh": "删除此已停止任务的锁文件（任务已结束，锁文件残留）",
+        "en": "Remove this stale lock file (task finished, file not cleaned up)",
+    },
+    "rm_log_group_primary": {"zh": "系统 & 运行日志", "en": "System & Run Logs"},
+    "rm_log_group_secondary": {"zh": "其他日志", "en": "Other Logs"},
+    "rm_log_group_system": {"zh": "系统日志", "en": "System Logs"},
+    "rm_log_group_runs": {"zh": "运行日志", "en": "Run Logs"},
+    "rm_no_log_selected": {
+        "zh": "请从上方选择一个日志文件以查看内容。",
+        "en": "Select a log file above to view its content.",
+    },
+    "rm_log_file_missing": {
+        "zh": "⚠️ 日志文件已不存在，可能已被清理。",
+        "en": "⚠️ Log file no longer exists, it may have been cleaned up.",
+    },
 }
 
 

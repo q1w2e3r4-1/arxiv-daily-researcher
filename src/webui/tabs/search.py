@@ -108,6 +108,15 @@ def render(_env_values: dict, config_values: dict):
         help=t("reports_by_source_help"),
     )
 
+    st.number_input(
+        t("arxiv_fetch_timeout_label"),
+        min_value=30,
+        max_value=1800,
+        value=flat.get("arxiv_fetch_timeout_seconds", 180),
+        key="arxiv_fetch_timeout_seconds",
+        help=t("arxiv_fetch_timeout_help"),
+    )
+
     st.divider()
 
     # ---- ArXiv Domains ----
@@ -116,14 +125,14 @@ def render(_env_values: dict, config_values: dict):
 
     current_domains = flat.get("domains", ["quant-ph"])
 
-    selected_domains = st.multiselect(
+    st.multiselect(
         t("select_arxiv_cats"),
         options=ARXIV_CATEGORIES,
         default=[d for d in current_domains if d in ARXIV_CATEGORIES],
         key="arxiv_domains",
     )
 
-    custom_domains = st.text_input(
+    st.text_input(
         t("custom_domains_label"),
         value=", ".join(d for d in current_domains if d not in ARXIV_CATEGORIES),
         key="custom_domains",
@@ -149,5 +158,6 @@ def collect(_env_values: dict, _config_values: dict) -> dict:
         "max_results": st.session_state.get("max_results", 100),
         "enabled_sources": enabled,
         "reports_by_source": st.session_state.get("reports_by_source", True),
+        "arxiv_fetch_timeout_seconds": st.session_state.get("arxiv_fetch_timeout_seconds", 180),
         "domains": domains,
     }

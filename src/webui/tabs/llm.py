@@ -1,4 +1,4 @@
-"""LLM Configuration tab for the Streamlit config panel."""
+"""API 配置 Tab（含 LLM、MinerU 和其他第三方 API 配置）。"""
 
 import streamlit as st
 from webui.i18n import t
@@ -27,7 +27,7 @@ LLM_PROVIDERS = {
 
 
 def _detect_provider(base_url: str) -> str:
-    """Detect provider from base URL."""
+    """从 base_url 推断 LLM Provider。"""
     for name, info in LLM_PROVIDERS.items():
         if name == "Custom":
             continue
@@ -37,7 +37,7 @@ def _detect_provider(base_url: str) -> str:
 
 
 def render(env_values: dict, _config_values: dict):
-    """Render the LLM configuration tab."""
+    """渲染 API 配置 Tab。"""
 
     # ---- CHEAP LLM ----
     st.markdown(f'<p class="section-title">{t("cheap_llm_title")}</p>', unsafe_allow_html=True)
@@ -159,8 +159,46 @@ def render(env_values: dict, _config_values: dict):
         else:
             st.error(msg)
 
-    # ---- Third-party API Keys ----
+    # ---- MinerU API ----
     st.divider()
+    st.markdown(f'<p class="section-title">{t("mineru_section_title")}</p>', unsafe_allow_html=True)
+    st.markdown(f'<p class="hint-text">{t("mineru_section_hint")}</p>', unsafe_allow_html=True)
+
+    mineru_key = st.text_input(
+        t("mineru_api_key_label"),
+        value=env_values.get("MINERU_API_KEY", ""),
+        type="password",
+        key="mineru_key",
+        help=t("mineru_key_help"),
+    )
+
+    col_m1, col_m2 = st.columns([1, 3])
+    with col_m1:
+        test_mineru_btn = st.button(
+            t("test_mineru_btn"), key="test_mineru", type="secondary", use_container_width=True
+        )
+    with col_m2:
+        st.caption(t("mineru_expire_note"))
+
+    if test_mineru_btn:
+        with st.spinner(t("testing_mineru")):
+            from utils.config_io import validate_mineru_connection
+
+            ok, msg = validate_mineru_connection(mineru_key)
+        if ok:
+            st.success(msg)
+        else:
+            st.warning(msg)
+
+    # 展示当前 Token 过期状态提醒（仅当有 key 时）
+    current_mineru_key = env_values.get("MINERU_API_KEY", "")
+    if current_mineru_key and not mineru_key:
+        # 已保存 key 但当前输入框为空（密码框默认不显示值）
+        pass
+
+    st.divider()
+
+    # ---- 其他第三方 API Keys ----
     st.markdown(
         f'<p class="section-title">{t("third_party_keys_title")}</p>', unsafe_allow_html=True
     )
@@ -186,16 +224,10 @@ def render(env_values: dict, _config_values: dict):
             type="password",
             key="openalex_key",
         )
-        st.text_input(
-            t("mineru_api_key_label"),
-            value=env_values.get("MINERU_API_KEY", ""),
-            type="password",
-            key="mineru_key",
-        )
 
 
 def collect(env_values: dict, _config_values: dict) -> dict:
-    """Collect current values from session state. Returns env updates."""
+    """从 session_state 收集当前值，返回 env 更新字典。"""
     return {
         "CHEAP_LLM__API_KEY": st.session_state.get("cheap_api_key", ""),
         "CHEAP_LLM__BASE_URL": st.session_state.get("cheap_base_url", ""),

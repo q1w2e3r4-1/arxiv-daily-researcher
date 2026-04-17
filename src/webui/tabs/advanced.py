@@ -71,7 +71,10 @@ def render(_env_values: dict, config_values: dict):
     st.divider()
 
     # ---- Report & Token Tracking ----
-    st.markdown(f'<p class="section-title">{t("reports_title")}</p>', unsafe_allow_html=True)
+    st.markdown(
+        f'<p class="section-title">{t("advanced_reports_title")}</p>',
+        unsafe_allow_html=True,
+    )
 
     col5, col6, col7 = st.columns(3)
     with col5:
@@ -192,6 +195,15 @@ def render(_env_values: dict, config_values: dict):
             key="retry_max_wait",
         )
 
+    st.number_input(
+        t("run_lock_max_age_label"),
+        min_value=1,
+        max_value=168,
+        value=flat.get("run_lock_max_age_hours", 12),
+        key="run_lock_max_age_hours",
+        help=t("run_lock_max_age_help"),
+    )
+
     col15, col16 = st.columns(2)
     with col15:
         rot_options = ["time", "size"]
@@ -211,79 +223,12 @@ def render(_env_values: dict, config_values: dict):
             key="log_keep_days",
         )
 
-    st.divider()
-
-    # ---- Trend Research ----
-    st.markdown(f'<p class="section-title">{t("trend_research_title")}</p>', unsafe_allow_html=True)
-    st.markdown(f'<p class="hint-text">{t("trend_research_hint")}</p>', unsafe_allow_html=True)
-
-    col17, col18 = st.columns(2)
-    with col17:
-        st.number_input(
-            t("trend_date_range_label"),
-            min_value=30,
-            max_value=3650,
-            value=flat.get("trend_default_date_range_days", 365),
-            key="trend_default_date_range_days",
-        )
-        sort_options = ["ascending", "descending"]
-        current_sort = flat.get("trend_sort_order", "ascending")
-        st.selectbox(
-            t("trend_sort_order_label"),
-            options=sort_options,
-            index=sort_options.index(current_sort) if current_sort in sort_options else 0,
-            key="trend_sort_order",
-        )
-    with col18:
-        st.number_input(
-            t("trend_max_results_label"),
-            min_value=10,
-            max_value=5000,
-            value=flat.get("trend_max_results", 500),
-            key="trend_max_results",
-        )
-        pos_options = ["beginning", "end"]
-        current_pos = flat.get("trend_report_position", "end")
-        st.selectbox(
-            t("trend_report_position_label"),
-            options=pos_options,
-            index=pos_options.index(current_pos) if current_pos in pos_options else 1,
-            key="trend_report_position",
-        )
-
-    col19, col20 = st.columns(2)
-    with col19:
-        st.toggle(
-            t("generate_tldr_label"),
-            value=flat.get("trend_generate_tldr", True),
-            key="trend_generate_tldr",
-        )
-    with col20:
-        st.number_input(
-            t("tldr_batch_size_label"),
-            min_value=1,
-            max_value=50,
-            value=flat.get("trend_tldr_batch_size", 10),
-            key="trend_tldr_batch_size",
-        )
-
-    st.markdown(t("enabled_skills_label"))
-    current_skills = flat.get("trend_enabled_skills", ALL_TREND_SKILL_IDS)
-    cols = st.columns(3)
-    for i, skill_id in enumerate(ALL_TREND_SKILL_IDS):
-        skill_label = t(f"skill_{skill_id}")
-        with cols[i % 3]:
-            st.checkbox(skill_label, value=skill_id in current_skills, key=f"skill_{skill_id}")
+    # 趋势分析设置已移至「趋势分析」 Tab，请在趋势分析 Tab 中配置。
 
 
 def collect(_env_values: dict, _config_values: dict) -> dict:
-    """Collect current values from session state. Returns config updates."""
-    enabled_skills = [
-        skill_id
-        for skill_id in ALL_TREND_SKILL_IDS
-        if st.session_state.get(f"skill_{skill_id}", False)
-    ]
-
+    """从 session_state 收集当前值，返回 config 更新字典。"""
+    # 注意：趋势分析的配置已移至 trend_runner.py，这里不再收集趋势分析相关设置。
     return {
         "pdf_parser_mode": st.session_state.get("pdf_parser_mode", "mineru"),
         "mineru_model_version": st.session_state.get("mineru_model_version", "pipeline"),
@@ -307,13 +252,7 @@ def collect(_env_values: dict, _config_values: dict) -> dict:
         "retry_max_attempts": st.session_state.get("retry_max_attempts", 3),
         "retry_min_wait": st.session_state.get("retry_min_wait", 2),
         "retry_max_wait": st.session_state.get("retry_max_wait", 30),
+        "run_lock_max_age_hours": st.session_state.get("run_lock_max_age_hours", 12),
         "log_rotation_type": st.session_state.get("log_rotation_type", "time"),
         "log_keep_days": st.session_state.get("log_keep_days", 30),
-        "trend_default_date_range_days": st.session_state.get("trend_default_date_range_days", 365),
-        "trend_max_results": st.session_state.get("trend_max_results", 500),
-        "trend_sort_order": st.session_state.get("trend_sort_order", "ascending"),
-        "trend_report_position": st.session_state.get("trend_report_position", "end"),
-        "trend_generate_tldr": st.session_state.get("trend_generate_tldr", True),
-        "trend_tldr_batch_size": st.session_state.get("trend_tldr_batch_size", 10),
-        "trend_enabled_skills": enabled_skills,
     }

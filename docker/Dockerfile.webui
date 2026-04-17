@@ -24,9 +24,9 @@ COPY configs/ ./configs/
 # Create __init__.py files for package imports
 RUN touch ./src/__init__.py ./src/utils/__init__.py
 
-# Streamlit config: disable telemetry and CORS for Docker
+# Streamlit config: disable telemetry, CORS, and file watcher for Docker
 RUN mkdir -p /root/.streamlit && \
-    printf '[server]\nheadless = true\nport = 8501\naddress = "0.0.0.0"\nenableCORS = false\nenableXsrfProtection = false\n\n[browser]\ngatherUsageStats = false\n' > /root/.streamlit/config.toml
+    printf '[server]\nheadless = true\nport = 8501\naddress = "0.0.0.0"\nenableCORS = false\nenableXsrfProtection = false\nfileWatcherType = "none"\n\n[browser]\ngatherUsageStats = false\n' > /root/.streamlit/config.toml
 
 EXPOSE 8501
 
