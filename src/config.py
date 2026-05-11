@@ -640,6 +640,33 @@ class Settings(BaseSettings):
             self.PASSING_SCORE_BASE + self.PASSING_SCORE_WEIGHT_COEFFICIENT * total_keyword_weight
         )
 
+    @staticmethod
+    def _split_model_names(raw_value: Any) -> List[str]:
+        """将单个模型名或逗号分隔的模型名字符串解析为列表。"""
+        if isinstance(raw_value, list):
+            return [str(item).strip() for item in raw_value if str(item).strip()]
+        if raw_value is None:
+            return []
+        return [part.strip() for part in str(raw_value).split(",") if part.strip()]
+
+    def apply_llm_model_overrides(self) -> None:
+        """
+        规范化 .env 中的模型名配置。
+
+        - CHEAP_LLM__MODEL_NAME 支持逗号分隔的多模型写法；
+        - 在 MLSys 委员会评分模式下，多模型列表会覆盖委员会模型配置；
+        - 其他使用 CHEAP_LLM 的功能默认取第一个模型，避免把逗号拼接串直接传给 API。
+        """
+        cheap_models = self._split_model_names(self.CHEAP_LLM.model_name)
+        if cheap_models:
+            if self.is_committee_scoring_enabled() and len(cheap_models) > 1:
+                self.MLSYS_COMMITTEE_MODELS = cheap_models
+            self.CHEAP_LLM.model_name = cheap_models[0]
+
+        smart_models = self._split_model_names(self.SMART_LLM.model_name)
+        if smart_models:
+            self.SMART_LLM.model_name = smart_models[0]
+
     def is_committee_scoring_enabled(self) -> bool:
         """是否启用 MLSys 多模型委员会评分。"""
         return self.SCORING_METHOD == "mlsys_multi_model"
@@ -711,6 +738,7 @@ settings = Settings()
 
 # 从 configs/config.json 加载配置（会覆盖默认值）
 settings.load_from_search_config()
+settings.apply_llm_model_overrides()
 
 # 自动创建所有必需的工作目录
 settings.ensure_directories()

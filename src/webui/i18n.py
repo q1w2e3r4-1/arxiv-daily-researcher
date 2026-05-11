@@ -365,8 +365,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     "scoring_method_committee": {"zh": "MLSys 多模型", "en": "MLSys multi-model"},
     "committee_title": {"zh": "MLSys 多模型评分", "en": "MLSys committee scoring"},
     "committee_hint": {
-        "zh": "4 个模型顺序打分；重复失败时记为 fallback 分数。",
-        "en": "Four models score sequentially; repeated failures fall back to the configured score.",
+        "zh": "4 个模型顺序打分；最终直接取 4 个分数的平均值，重复失败时按 fallback 分数计入平均。",
+        "en": "Four models score sequentially; the final decision uses the average of all four scores, and repeated failures contribute the fallback score to that average.",
     },
     "committee_models_label": {"zh": "委员会模型（每行一个）", "en": "Committee models (one per line)"},
     "committee_models_help": {

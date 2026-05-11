@@ -299,6 +299,13 @@ class ScoringRenderer(BaseModuleRenderer):
 
             if scoring_method == 'mlsys_multi_model':
                 judgments = getattr(score_resp, 'model_judgments', []) or []
+                detail_lines.append(
+                    f"- **委员会规则**: 4 个模型最终分数直接取平均；平均分 >= {score_resp.passing_score:.1f} 即通过"
+                )
+                detail_lines.append(
+                    "- **说明**: 下表中的单模型通过/不通过仅作诊断展示，不直接决定最终结果"
+                )
+                detail_lines.append("")
                 if fmt == "table":
                     rows = []
                     for row in judgments:
@@ -315,12 +322,12 @@ class ScoringRenderer(BaseModuleRenderer):
                     if rows:
                         detail_lines.extend(self.format_helper.format_as_table(
                             rows,
-                            ["模型", "分数", "判定", "Fallback", "说明"]
+                            ["模型", "分数", "单模型判定", "Fallback", "说明"]
                         ))
                 else:
                     for row in judgments:
                         fallback = " fallback" if row.get('fallback_due_to_error') else ""
-                        status = "pass" if row.get('pass') else "fail"
+                        status = "model-pass" if row.get('pass') else "model-fail"
                         error = row.get('fallback_error', '') or row.get('reason', '')
                         detail_lines.append(
                             f"- **{row.get('model', '')}**: {float(row.get('final_score', 0)):.1f} | {status}{fallback} | {error}"
@@ -334,7 +341,7 @@ class ScoringRenderer(BaseModuleRenderer):
                     f"- **Fallback 模型数**: {getattr(score_resp, 'fallback_model_count', 0)}"
                 )
                 detail_lines.append(
-                    f"- **一致率**: {getattr(score_resp, 'agreement_ratio', 0.0):.2f}"
+                    f"- **一致率（诊断）**: {getattr(score_resp, 'agreement_ratio', 0.0):.2f}"
                 )
                 if getattr(score_resp, 'aggregate_paper_type', ''):
                     detail_lines.append(

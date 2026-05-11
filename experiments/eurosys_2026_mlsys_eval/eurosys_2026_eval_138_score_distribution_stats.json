@@ -1,0 +1,46 @@
+{
+  "positive_count": 42,
+  "negative_count": 96,
+  "positive": {
+    "min": 5.25,
+    "q1": 7.8125,
+    "median": 8.25,
+    "mean": 8.238095238095237,
+    "q3": 8.5,
+    "max": 11.0,
+    "below_6_count": 1,
+    "below_6_titles": [
+      "FlexiQ: Adaptive Mixed-Precision Quantization for Latency/Accuracy Trade-Offs in Deep Neural Networks"
+    ]
+  },
+  "negative": {
+    "min": 1.0,
+    "q1": 1.5,
+    "median": 2.0,
+    "mean": 2.8125,
+    "q3": 2.5,
+    "max": 10.75,
+    "above_or_equal_6_count": 12,
+    "above_or_equal_6_titles": [
+      "On-device Semantic Selection Made Low Latency and Memory Efficient with Monolithic Forwarding",
+      "From Imperative to Declarative: Towards LLM-friendly OS Interfaces for Boosted Computer-Use Agents",
+      "Enabling Packet Spraying over Commodity RNICs with In-Network Support",
+      "HARP: Orchestrating Automated Parallel Training on Heterogeneous GPU Clusters",
+      "SwiftFL: Enabling Speculative Training for On-Device Federated Deep Learning",
+      "Crimson: Collaborative Parameter Updates for Efficient Pipeline Training of Large Language Models",
+      "PointShuffler: Accelerating Point Cloud Neural Networks on General-Purpose GPUs",
+      "TAO: Tolerance-Aware Optimistic Verification for Floating-Point Neural Networks",
+      "Efficient ML Model Updates for Deeply Embedded Microcontrollers",
+      "viNPU: Optimizing Vision Transformer Inference on Mobile NPUs",
+      "AIMS: Cost-Efficient LLM-Based Agent Deployment in Hybrid Cloud-Edge Environments",
+      "Suika: Efficient and High-quality Re-scheduling of 3D-parallelized LLM Training Jobs in Shared Clusters"
+    ]
+  },
+  "threshold_behavior": {
+    "avg_ge_6_with_1_supporting_model_count": 0,
+    "avg_ge_6_with_1_supporting_model_examples": [],
+    "avg_ge_6_with_2_supporting_model_count": 0,
+    "avg_ge_6_with_2_supporting_model_examples": [],
+    "avg_ge_6_with_ge_3_supporting_models_count": 53
+  }
+}

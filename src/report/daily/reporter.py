@@ -311,7 +311,7 @@ class Reporter:
             lines.append(f"- **委员会模型**: {', '.join(settings.MLSYS_COMMITTEE_MODELS)}")
             lines.append(f"- **通过分数**: {settings.MLSYS_PASSING_SCORE:.1f}")
             lines.append(f"- **Fallback 分数**: {settings.MLSYS_FALLBACK_SCORE:.1f}")
-            lines.append("- **集成规则**: 成功模型多数通过则通过；平票时看平均分；成功模型少于2个则不通过")
+            lines.append("- **集成规则**: 4 个模型最终分数直接取平均；若平均分 >= 通过分数则通过；fallback 失败按 5 分计入平均")
             lines.append("")
         else:
             lines.append(f"### 关键词列表（共 {len(keywords_dict)} 个，总权重 {total_weight:.1f}）")

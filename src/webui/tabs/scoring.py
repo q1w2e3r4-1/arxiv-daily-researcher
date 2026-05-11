@@ -174,8 +174,9 @@ def render(_env_values: dict, config_values: dict):
             "mlsys_circuit_breaker_threshold", flat.get("mlsys_circuit_breaker_threshold", 3)
         )
         st.info(
-            f"Committee rule: 4 sequential model calls, pass threshold = **{pass_score:.1f}**, "
-            f"fallback score = **{fallback_score:.1f}**, circuit breaker = **{breaker}**."
+            f"Committee rule: 4 sequential model calls, final decision = average of the 4 final scores, "
+            f"pass threshold = **{pass_score:.1f}**, fallback score = **{fallback_score:.1f}**, "
+            f"circuit breaker = **{breaker}**."
         )
 
 

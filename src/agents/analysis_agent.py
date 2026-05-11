@@ -419,8 +419,16 @@ class AnalysisAgent:
         outcome = "qualified" if is_qualified else "not qualified"
 
         parts = [
-            f"Committee result: {pass_votes}/{len(successful_rows)} successful model judgments passed; {fallback_count} fallback(s).",
+            (
+                f"Committee result: averaged {len(judgments)} final scores with pass threshold "
+                f"{float(settings.MLSYS_PASSING_SCORE):.1f}; fallback rows contribute "
+                f"{float(settings.MLSYS_FALLBACK_SCORE):.1f}."
+            ),
             f"Aggregate score: {total_score:.2f}. Ensemble decision: {outcome}.",
+            (
+                f"Diagnostic only: {pass_votes}/{len(successful_rows)} successful non-fallback "
+                f"model judgments individually passed; {fallback_count} fallback(s)."
+            ),
         ]
 
         paper_types = [row.get("paper_type", "") for row in successful_rows if row.get("paper_type")]
@@ -707,15 +715,7 @@ class AnalysisAgent:
             else float(settings.MLSYS_FALLBACK_SCORE)
         )
         passing_score = float(settings.MLSYS_PASSING_SCORE)
-
-        if successful_model_count < 2:
-            is_qualified = False
-        elif pass_votes > fail_votes:
-            is_qualified = True
-        elif pass_votes < fail_votes:
-            is_qualified = False
-        else:
-            is_qualified = total_score >= passing_score
+        is_qualified = total_score >= passing_score
 
         agreement_ratio = (
             max(pass_votes, fail_votes) / successful_model_count if successful_model_count else 0.0
