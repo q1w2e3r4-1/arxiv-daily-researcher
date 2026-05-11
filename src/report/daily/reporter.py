@@ -185,7 +185,11 @@ class Reporter:
         analyzed_count = len(analyses)
 
         total_weight = sum(keywords_dict.values())
-        passing_score = settings.calculate_passing_score(total_weight)
+        passing_score = (
+            settings.MLSYS_PASSING_SCORE
+            if settings.is_committee_scoring_enabled()
+            else settings.calculate_passing_score(total_weight)
+        )
 
         # 按总分排序
         sorted_papers = sorted(papers, key=lambda x: x["score_response"].total_score, reverse=True)
@@ -300,29 +304,37 @@ class Reporter:
         lines.append("## 📌 配置信息")
         lines.append("")
 
-        # 关键词列表
-        lines.append(f"### 关键词列表（共 {len(keywords_dict)} 个，总权重 {total_weight:.1f}）")
-        lines.append("")
-        lines.append("| 关键词 | 权重 | 类型 |")
-        lines.append("|--------|------|------|")
-        for kw, weight in sorted(keywords_dict.items(), key=lambda x: x[1], reverse=True):
-            kw_type = "主要" if weight >= 1.0 else "次要"
-            lines.append(f"| {kw} | {weight:.1f} | {kw_type} |")
-        lines.append("")
+        if settings.is_committee_scoring_enabled():
+            lines.append("### 评分设置")
+            lines.append("")
+            lines.append("- **评分策略**: MLSys 多模型委员会")
+            lines.append(f"- **委员会模型**: {', '.join(settings.MLSYS_COMMITTEE_MODELS)}")
+            lines.append(f"- **通过分数**: {settings.MLSYS_PASSING_SCORE:.1f}")
+            lines.append(f"- **Fallback 分数**: {settings.MLSYS_FALLBACK_SCORE:.1f}")
+            lines.append("- **集成规则**: 成功模型多数通过则通过；平票时看平均分；成功模型少于2个则不通过")
+            lines.append("")
+        else:
+            lines.append(f"### 关键词列表（共 {len(keywords_dict)} 个，总权重 {total_weight:.1f}）")
+            lines.append("")
+            lines.append("| 关键词 | 权重 | 类型 |")
+            lines.append("|--------|------|------|")
+            for kw, weight in sorted(keywords_dict.items(), key=lambda x: x[1], reverse=True):
+                kw_type = "主要" if weight >= 1.0 else "次要"
+                lines.append(f"| {kw} | {weight:.1f} | {kw_type} |")
+            lines.append("")
 
-        # 评分设置
-        lines.append("### 评分设置")
-        lines.append("")
-        lines.append(f"- **每个关键词最大分**: {settings.MAX_SCORE_PER_KEYWORD}")
-        lines.append(
-            f"- **及格分公式**: {settings.PASSING_SCORE_BASE} + {settings.PASSING_SCORE_WEIGHT_COEFFICIENT} × 总权重"
-        )
-        lines.append(f"- **当前及格分**: {passing_score:.1f}")
-        if settings.ENABLE_AUTHOR_BONUS:
-            lines.append(f"- **作者加分**: 启用（{settings.AUTHOR_BONUS_POINTS}分/专家）")
-            if settings.EXPERT_AUTHORS:
-                lines.append(f"- **专家作者**: {', '.join(settings.EXPERT_AUTHORS)}")
-        lines.append("")
+            lines.append("### 评分设置")
+            lines.append("")
+            lines.append(f"- **每个关键词最大分**: {settings.MAX_SCORE_PER_KEYWORD}")
+            lines.append(
+                f"- **及格分公式**: {settings.PASSING_SCORE_BASE} + {settings.PASSING_SCORE_WEIGHT_COEFFICIENT} × 总权重"
+            )
+            lines.append(f"- **当前及格分**: {passing_score:.1f}")
+            if settings.ENABLE_AUTHOR_BONUS:
+                lines.append(f"- **作者加分**: 启用（{settings.AUTHOR_BONUS_POINTS}分/专家）")
+                if settings.EXPERT_AUTHORS:
+                    lines.append(f"- **专家作者**: {', '.join(settings.EXPERT_AUTHORS)}")
+            lines.append("")
 
         return lines
 
@@ -485,7 +497,11 @@ class Reporter:
         analyzed_count = len(analyses)
 
         total_weight = sum(keywords_dict.values())
-        passing_score = settings.calculate_passing_score(total_weight)
+        passing_score = (
+            settings.MLSYS_PASSING_SCORE
+            if settings.is_committee_scoring_enabled()
+            else settings.calculate_passing_score(total_weight)
+        )
 
         sorted_papers = sorted(papers, key=lambda x: x["score_response"].total_score, reverse=True)
 
@@ -583,9 +599,11 @@ class Reporter:
                 f'<div class="field"><span class="field-label">Published:</span> {h(published)}</div>'
             )
 
-            # TLDR
-            if sr.tldr and sr.tldr != "评分失败，无法生成摘要":
-                parts.append(f'<div class="tldr"><strong>TL;DR:</strong> {self._hm(sr.tldr)}</div>')
+            # TLDR / reasoning
+            summary_text = sr.tldr or sr.reasoning
+            if summary_text and summary_text != "评分失败，无法生成摘要":
+                summary_label = "TL;DR" if sr.tldr else "Reasoning"
+                parts.append(f'<div class="tldr"><strong>{summary_label}:</strong> {self._hm(summary_text)}</div>')
 
             # 中文摘要（可折叠）
             abstract_cn = paper.get("abstract_cn", "")
@@ -602,7 +620,43 @@ class Reporter:
                 parts.append(f'<div class="analysis-content"><p>{self._hm(abstract)}</p></div></details>')
 
             # 评分详情（可折叠）
-            if sr.keyword_scores:
+            if getattr(sr, 'scoring_method', 'keyword_weighted') == 'mlsys_multi_model':
+                judgments = getattr(sr, 'model_judgments', []) or []
+                if judgments:
+                    parts.append("<details><summary>评分详情</summary>")
+                    parts.append('<div class="analysis-content">')
+                    parts.append(
+                        '<table style="width:100%;border-collapse:collapse;font-size:0.85em;">'
+                    )
+                    parts.append(
+                        '<tr style="border-bottom:2px solid var(--color-border);">'
+                        '<th style="text-align:left;padding:4px 8px;">模型</th>'
+                        '<th style="text-align:center;padding:4px 8px;">分数</th>'
+                        '<th style="text-align:center;padding:4px 8px;">判定</th>'
+                        '<th style="text-align:center;padding:4px 8px;">Fallback</th>'
+                        '<th style="text-align:left;padding:4px 8px;">说明</th></tr>'
+                    )
+                    for row in judgments:
+                        parts.append(
+                            f'<tr style="border-bottom:1px solid var(--color-border);">'
+                            f'<td style="padding:4px 8px;">{h(row.get("model", ""))}</td>'
+                            f'<td style="text-align:center;padding:4px 8px;">{float(row.get("final_score", 0)):.1f}</td>'
+                            f'<td style="text-align:center;padding:4px 8px;">{"通过" if row.get("pass") else "不通过"}</td>'
+                            f'<td style="text-align:center;padding:4px 8px;">{"是" if row.get("fallback_due_to_error") else "否"}</td>'
+                            f'<td style="padding:4px 8px;">{h(row.get("fallback_error") or row.get("reason", ""))}</td></tr>'
+                        )
+                    parts.append("</table>")
+                    parts.append(
+                        f'<p style="margin-top:8px;"><strong>成功模型数:</strong> {getattr(sr, "successful_model_count", 0)} | '
+                        f'<strong>Fallback 模型数:</strong> {getattr(sr, "fallback_model_count", 0)} | '
+                        f'<strong>一致率:</strong> {getattr(sr, "agreement_ratio", 0.0):.2f}</p>'
+                    )
+                    if sr.reasoning:
+                        parts.append(
+                            f'<p style="margin-top:8px;"><strong>评分理由:</strong> {h(sr.reasoning)}</p>'
+                        )
+                    parts.append("</div></details>")
+            elif sr.keyword_scores:
                 parts.append("<details><summary>评分详情</summary>")
                 parts.append('<div class="analysis-content">')
                 parts.append(

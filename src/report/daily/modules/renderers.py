@@ -242,7 +242,7 @@ class TldrAiRenderer(BaseModuleRenderer):
         tldr = None
 
         if score_resp and hasattr(score_resp, 'tldr'):
-            tldr = score_resp.tldr
+            tldr = score_resp.tldr or getattr(score_resp, 'reasoning', '')
         elif 'tldr' in data:
             tldr = data.get('tldr')
 
@@ -295,36 +295,80 @@ class ScoringRenderer(BaseModuleRenderer):
 
         if show_details:
             detail_lines = []
+            scoring_method = getattr(score_resp, 'scoring_method', 'keyword_weighted')
 
-            if fmt == "table":
-                # 表格格式
-                rows = []
-                for kw, score in score_resp.keyword_scores.items():
-                    weight = keywords_dict.get(kw, 0)
-                    weighted = score * weight
-                    rows.append((kw, f"{weight:.1f}", f"{score:.1f}/10", f"{weighted:.1f}"))
+            if scoring_method == 'mlsys_multi_model':
+                judgments = getattr(score_resp, 'model_judgments', []) or []
+                if fmt == "table":
+                    rows = []
+                    for row in judgments:
+                        fallback = "是" if row.get('fallback_due_to_error') else "否"
+                        status = "通过" if row.get('pass') else "不通过"
+                        error = row.get('fallback_error', '') or row.get('reason', '')
+                        rows.append((
+                            row.get('model', ''),
+                            f"{float(row.get('final_score', 0)):.1f}",
+                            status,
+                            fallback,
+                            error,
+                        ))
+                    if rows:
+                        detail_lines.extend(self.format_helper.format_as_table(
+                            rows,
+                            ["模型", "分数", "判定", "Fallback", "说明"]
+                        ))
+                else:
+                    for row in judgments:
+                        fallback = " fallback" if row.get('fallback_due_to_error') else ""
+                        status = "pass" if row.get('pass') else "fail"
+                        error = row.get('fallback_error', '') or row.get('reason', '')
+                        detail_lines.append(
+                            f"- **{row.get('model', '')}**: {float(row.get('final_score', 0)):.1f} | {status}{fallback} | {error}"
+                        )
+                    detail_lines.append("")
 
-                if score_resp.author_bonus > 0:
-                    experts = ", ".join(score_resp.expert_authors_found)
-                    rows.append(("作者加分", "-", f"+{score_resp.author_bonus:.1f}", f"专家: {experts}"))
-
-                if rows:
-                    detail_lines.extend(self.format_helper.format_as_table(
-                        rows,
-                        ["关键词", "权重", "相关度", "得分"]
-                    ))
-            else:
-                # 列表格式
-                for kw, score in score_resp.keyword_scores.items():
-                    weight = keywords_dict.get(kw, 0)
-                    weighted = score * weight
-                    detail_lines.append(f"- **{kw}** (权重{weight:.1f}): {score:.1f}/10 → {weighted:.1f}")
-
-                if score_resp.author_bonus > 0:
-                    experts = ", ".join(score_resp.expert_authors_found)
-                    detail_lines.append(f"- **作者加分**: +{score_resp.author_bonus:.1f}（专家: {experts}）")
-
+                detail_lines.append(
+                    f"- **成功模型数**: {getattr(score_resp, 'successful_model_count', 0)}"
+                )
+                detail_lines.append(
+                    f"- **Fallback 模型数**: {getattr(score_resp, 'fallback_model_count', 0)}"
+                )
+                detail_lines.append(
+                    f"- **一致率**: {getattr(score_resp, 'agreement_ratio', 0.0):.2f}"
+                )
+                if getattr(score_resp, 'aggregate_paper_type', ''):
+                    detail_lines.append(
+                        f"- **聚合类型**: {getattr(score_resp, 'aggregate_paper_type', '')}"
+                    )
                 detail_lines.append("")
+            else:
+                if fmt == "table":
+                    rows = []
+                    for kw, score in score_resp.keyword_scores.items():
+                        weight = keywords_dict.get(kw, 0)
+                        weighted = score * weight
+                        rows.append((kw, f"{weight:.1f}", f"{score:.1f}/10", f"{weighted:.1f}"))
+
+                    if score_resp.author_bonus > 0:
+                        experts = ", ".join(score_resp.expert_authors_found)
+                        rows.append(("作者加分", "-", f"+{score_resp.author_bonus:.1f}", f"专家: {experts}"))
+
+                    if rows:
+                        detail_lines.extend(self.format_helper.format_as_table(
+                            rows,
+                            ["关键词", "权重", "相关度", "得分"]
+                        ))
+                else:
+                    for kw, score in score_resp.keyword_scores.items():
+                        weight = keywords_dict.get(kw, 0)
+                        weighted = score * weight
+                        detail_lines.append(f"- **{kw}** (权重{weight:.1f}): {score:.1f}/10 → {weighted:.1f}")
+
+                    if score_resp.author_bonus > 0:
+                        experts = ", ".join(score_resp.expert_authors_found)
+                        detail_lines.append(f"- **作者加分**: +{score_resp.author_bonus:.1f}（专家: {experts}）")
+
+                    detail_lines.append("")
 
             if show_reasoning and score_resp.reasoning:
                 detail_lines.append(f"**评分理由**: {score_resp.reasoning}")

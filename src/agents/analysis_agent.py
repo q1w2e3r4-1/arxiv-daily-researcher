@@ -1,13 +1,19 @@
 import json
 import logging
 import hashlib
+import random
+import re
 import threading
-import requests
-import fitz  # pymupdf
-from typing import Optional, Dict, Any, List
+import time
+from collections import Counter
+from datetime import datetime
 from pathlib import Path
+from typing import Optional, Dict, Any, List
+
+import fitz  # pymupdf
+import requests
 from openai import OpenAI
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
 from config import settings
@@ -15,27 +21,8 @@ from parsers.mineru_parser import MineruParser
 
 logger = logging.getLogger(__name__)
 
-# ======================================================================
-# Pydantic数据模型：用于验证和结构化LLM输出
-# ======================================================================
-
 
 class WeightedScoreResponse(BaseModel):
-    """
-    加权评分响应模型（新策略）。
-
-    属性:
-        total_score (float): 总分（关键词加权分 + 作者附加分）
-        keyword_scores (Dict[str, float]): 每个关键词的相关度评分（0-10）
-        author_bonus (float): 作者附加分
-        expert_authors_found (List[str]): 发现的专家作者列表
-        passing_score (float): 动态及格分
-        is_qualified (bool): 是否及格
-        reasoning (str): 评分理由和分析
-        tldr (str): 一句话总结论文的研究问题和结果
-        extracted_keywords (List[str]): 从标题和摘要中提取的关键词
-    """
-
     total_score: float
     keyword_scores: Dict[str, float]
     author_bonus: float
@@ -45,15 +32,15 @@ class WeightedScoreResponse(BaseModel):
     reasoning: str
     tldr: str
     extracted_keywords: List[str]
+    scoring_method: str = "keyword_weighted"
+    model_judgments: List[Dict[str, Any]] = Field(default_factory=list)
+    successful_model_count: int = 0
+    fallback_model_count: int = 0
+    agreement_ratio: float = 0.0
+    aggregate_paper_type: str = ""
 
 
 class Stage2Response(BaseModel):
-    """
-    深度分析响应模型（可配置字段）。
-
-    属性根据 settings.ENABLED_ANALYSIS_FIELDS 动态使用。
-    """
-
     chinese_title: Optional[str] = None
     summary: Optional[str] = None
     innovations: Optional[List[str]] = None
@@ -68,18 +55,7 @@ class Stage2Response(BaseModel):
 
 
 class AnalysisAgent:
-    """
-    论文分析Agent（新策略：加权评分系统）。
-
-    职责:
-    - 基于关键词权重对论文进行加权评分
-    - 检测专家作者并给予附加分
-    - 计算动态及格分并判断是否合格
-    - 对及格论文进行深度分析（使用可配置模板）
-    """
-
     def __init__(self):
-        # 初始化两个不同性能LLM客户端
         self.cheap_client = OpenAI(
             api_key=settings.CHEAP_LLM.api_key, base_url=settings.CHEAP_LLM.base_url
         )
@@ -87,19 +63,38 @@ class AnalysisAgent:
             api_key=settings.SMART_LLM.api_key, base_url=settings.SMART_LLM.base_url
         )
 
-        # 初始化 MinerU PDF 解析器
         self.mineru_parser = MineruParser()
-
-        # 加载报告模板以获取prompt配置
         self.basic_template = settings.load_report_template("basic_report_template.json")
         self.deep_template = settings.load_report_template("deep_analysis_template.json")
+        self.mlsys_prompt_template = settings.load_report_template("mlsys_screening_prompt.json")
 
-    # ======================================================================
-    # 带重试的 LLM / HTTP 调用封装
-    # ======================================================================
+        self.committee_run_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.committee_artifact_dir = (
+            settings.DATA_DIR / "scoring_artifacts" / "mlsys_multi_model" / self.committee_run_id
+        )
+        self.committee_failures = {model: 0 for model in settings.MLSYS_COMMITTEE_MODELS}
+        self.committee_artifact_lock = threading.Lock()
+
+        if settings.MLSYS_EXPORT_ARTIFACTS:
+            self.committee_artifact_dir.mkdir(parents=True, exist_ok=True)
+            meta_path = self.committee_artifact_dir / "run_meta.json"
+            meta_path.write_text(
+                json.dumps(
+                    {
+                        "run_id": self.committee_run_id,
+                        "scoring_method": "mlsys_multi_model",
+                        "committee_models": settings.MLSYS_COMMITTEE_MODELS,
+                        "passing_score": settings.MLSYS_PASSING_SCORE,
+                        "fallback_score": settings.MLSYS_FALLBACK_SCORE,
+                        "circuit_breaker_threshold": settings.MLSYS_CIRCUIT_BREAKER_THRESHOLD,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
 
     def _call_cheap_llm(self, prompt: str) -> str:
-        """调用低成本LLM（JSON模式），带自动重试。"""
         estimated_prompt_tokens = len(prompt) // 4
 
         @retry(
@@ -135,7 +130,6 @@ class AnalysisAgent:
         return _do_call()
 
     def _call_cheap_llm_plain(self, prompt: str) -> str:
-        """调用低成本LLM（纯文本模式），带自动重试。"""
         estimated_prompt_tokens = len(prompt) // 4
 
         @retry(
@@ -170,7 +164,6 @@ class AnalysisAgent:
         return _do_call()
 
     def _call_smart_llm(self, prompt: str) -> str:
-        """调用高性能LLM（JSON模式），带自动重试。"""
         estimated_prompt_tokens = len(prompt) // 4
 
         @retry(
@@ -206,8 +199,6 @@ class AnalysisAgent:
         return _do_call()
 
     def _download_pdf_bytes(self, pdf_url: str) -> bytes:
-        """下载PDF内容，带自动重试。"""
-
         @retry(
             stop=stop_after_attempt(settings.RETRY_MAX_ATTEMPTS),
             wait=wait_exponential(min=settings.RETRY_MIN_WAIT, max=settings.RETRY_MAX_WAIT),
@@ -225,8 +216,6 @@ class AnalysisAgent:
         return _do_download()
 
     def _clean_json_string(self, json_str: str) -> str:
-        """清理LLM响应中的Markdown代码块标记和非法转义字符。"""
-        # 移除Markdown代码块标记
         if "```json" in json_str:
             json_str = json_str.split("```json")[1].split("```")[0]
         elif "```" in json_str:
@@ -234,30 +223,20 @@ class AnalysisAgent:
 
         json_str = json_str.strip()
 
-        # 修复常见的非法转义字符（LaTeX符号等）
-        # 使用原始字符串处理，避免Python本身的转义问题
-        import re
-
-        # 找到所有字符串值（在双引号内的内容）
         def fix_escapes_in_match(match):
             content = match.group(1)
-            # 只保留合法的JSON转义序列：\" \\ \/ \b \f \n \r \t \uXXXX
-            # 将其他反斜杠转义为双反斜杠
             result = ""
             i = 0
             while i < len(content):
                 if content[i] == "\\":
                     if i + 1 < len(content):
                         next_char = content[i + 1]
-                        # 合法的转义字符
                         if next_char in ['"', "\\", "/", "b", "f", "n", "r", "t"]:
                             result += content[i : i + 2]
                             i += 2
-                        # Unicode转义
                         elif next_char == "u" and i + 5 < len(content):
                             result += content[i : i + 6]
                             i += 6
-                        # 非法转义，转义反斜杠本身
                         else:
                             result += "\\\\"
                             i += 1
@@ -269,43 +248,231 @@ class AnalysisAgent:
                     i += 1
             return f'"{result}"'
 
-        # 匹配JSON字符串值（简化版，不处理嵌套）
-        json_str = re.sub(r'"((?:[^"\\]|\\.)*)"', fix_escapes_in_match, json_str)
+        return re.sub(r'"((?:[^"\\]|\\.)*)"', fix_escapes_in_match, json_str)
 
-        return json_str
+    def _safe_int(self, value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return default
 
-    # ======================================================================
-    # 新策略：加权评分系统
-    # ======================================================================
+    def _extract_usage(self, resp: Any) -> Dict[str, int]:
+        usage = getattr(resp, "usage", None)
+        if not usage:
+            return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        return {
+            "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+            "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+            "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+        }
+
+    def _parse_model_json(self, raw_text: str) -> Dict[str, Any]:
+        text = self._clean_json_string(raw_text or "").strip()
+        if not text:
+            raise json.JSONDecodeError("empty response", raw_text or "", 0)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, flags=re.S)
+        if fenced:
+            return json.loads(fenced.group(1).strip())
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return json.loads(text[start : end + 1])
+        raise json.JSONDecodeError("no json object found", raw_text or "", 0)
+
+    def _build_mlsys_prompts(
+        self, title: str, abstract: str, source: str, categories: Optional[List[str]] = None
+    ) -> tuple[str, str]:
+        template = self.mlsys_prompt_template or {}
+        prompts = template.get("prompts", {})
+        system_prompt = prompts.get(
+            "system",
+            "You are screening research papers for an AI infrastructure researcher. Judge MLSys relevance from the title and abstract only.",
+        )
+        user_prompt = prompts.get("user_template", "Title: {title}\nAbstract: {abstract}")
+        category_text = ", ".join(categories or []) if categories else source or "arXiv"
+        replacements = {
+            "{title}": title,
+            "{abstract}": abstract or "",
+            "{source}": source or "arXiv",
+            "{categories}": category_text,
+        }
+        for old, new in replacements.items():
+            user_prompt = user_prompt.replace(old, str(new))
+        return system_prompt, user_prompt
+
+    def _call_committee_model(
+        self, model_name: str, system_prompt: str, user_prompt: str
+    ) -> tuple[str, float, Dict[str, int]]:
+        estimated_prompt_tokens = (len(system_prompt) + len(user_prompt)) // 4
+        last_error: Exception | None = None
+
+        for attempt in range(settings.RETRY_MAX_ATTEMPTS):
+            started = time.perf_counter()
+            try:
+                resp = self.cheap_client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0,
+                    response_format={"type": "json_object"},
+                )
+                latency = time.perf_counter() - started
+                usage = self._extract_usage(resp)
+                content = resp.choices[0].message.content or ""
+
+                if settings.TOKEN_TRACKING_ENABLED:
+                    from utils.token_counter import token_counter
+
+                    if usage["total_tokens"] > 0:
+                        token_counter.add(
+                            model_name, usage["prompt_tokens"], usage["completion_tokens"]
+                        )
+                    else:
+                        token_counter.add(model_name, estimated_prompt_tokens, len(content) // 4)
+
+                return content, latency, usage
+            except Exception as exc:
+                last_error = exc
+                if settings.TOKEN_TRACKING_ENABLED:
+                    from utils.token_counter import token_counter
+
+                    token_counter.add(model_name, estimated_prompt_tokens, 0)
+                if attempt == settings.RETRY_MAX_ATTEMPTS - 1:
+                    raise
+                wait_seconds = min(
+                    settings.RETRY_MAX_WAIT,
+                    max(settings.RETRY_MIN_WAIT, 2**attempt) + random.random(),
+                )
+                time.sleep(wait_seconds)
+
+        raise RuntimeError(str(last_error) if last_error else "unknown committee llm error")
+
+    def _append_jsonl(self, path: Path, rows: List[Dict[str, Any]]) -> None:
+        if not rows:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    def _persist_committee_artifacts(
+        self,
+        raw_rows: List[Dict[str, Any]],
+        judgment_rows: List[Dict[str, Any]],
+        summary_row: Dict[str, Any],
+    ) -> None:
+        if not settings.MLSYS_EXPORT_ARTIFACTS:
+            return
+        with self.committee_artifact_lock:
+            self._append_jsonl(self.committee_artifact_dir / "raw_responses.jsonl", raw_rows)
+            self._append_jsonl(self.committee_artifact_dir / "judgments.jsonl", judgment_rows)
+            self._append_jsonl(
+                self.committee_artifact_dir / "fallbacks.jsonl",
+                [row for row in judgment_rows if row.get("fallback_due_to_error")],
+            )
+            self._append_jsonl(self.committee_artifact_dir / "paper_scores.jsonl", [summary_row])
+
+    def _make_fallback_committee_judgment(
+        self,
+        paper_id: str,
+        title: str,
+        abstract: str,
+        source: str,
+        categories: Optional[List[str]],
+        model_name: str,
+        error: str,
+        latency: float,
+        usage: Dict[str, int],
+    ) -> Dict[str, Any]:
+        fallback_score = float(settings.MLSYS_FALLBACK_SCORE)
+        return {
+            "paper_id": paper_id,
+            "title": title,
+            "abstract": abstract or "",
+            "source": source,
+            "categories": categories or [],
+            "model": model_name,
+            "paper_type": "fallback_error",
+            "base_score": fallback_score,
+            "preference_bonus": 0,
+            "final_score": fallback_score,
+            "pass": False,
+            "reason": f"Fallback score after repeated API failure: {error}",
+            "latency_seconds": round(latency, 4),
+            "fallback_due_to_error": True,
+            "fallback_error": error,
+            **usage,
+        }
+
+    def _summarize_committee_reasons(
+        self, judgments: List[Dict[str, Any]], is_qualified: bool, total_score: float
+    ) -> str:
+        successful_rows = [row for row in judgments if not row.get("fallback_due_to_error")]
+        fallback_count = len(judgments) - len(successful_rows)
+        pass_votes = sum(1 for row in successful_rows if row.get("pass"))
+        outcome = "qualified" if is_qualified else "not qualified"
+
+        parts = [
+            f"Committee result: {pass_votes}/{len(successful_rows)} successful model judgments passed; {fallback_count} fallback(s).",
+            f"Aggregate score: {total_score:.2f}. Ensemble decision: {outcome}.",
+        ]
+
+        paper_types = [row.get("paper_type", "") for row in successful_rows if row.get("paper_type")]
+        if paper_types:
+            parts.append(f"Dominant paper type: {Counter(paper_types).most_common(1)[0][0]}.")
+
+        reason_bits = []
+        for row in judgments:
+            reason = " ".join((row.get("reason") or "").split())
+            if reason:
+                reason_bits.append(f"{row['model']}: {reason}")
+            if len(reason_bits) >= 3:
+                break
+        if reason_bits:
+            parts.append(" ".join(reason_bits))
+
+        return " ".join(parts)
+
+    def score_paper(
+        self,
+        title: str,
+        authors: str,
+        abstract: str,
+        keywords_dict: Optional[Dict[str, float]] = None,
+        paper_id: str = "",
+        source: str = "",
+        categories: Optional[List[str]] = None,
+    ) -> WeightedScoreResponse:
+        if settings.is_committee_scoring_enabled():
+            return self.score_paper_with_committee(
+                paper_id=paper_id,
+                title=title,
+                abstract=abstract,
+                source=source,
+                categories=categories,
+            )
+        return self.score_paper_with_keywords(
+            title=title,
+            authors=authors,
+            abstract=abstract,
+            keywords_dict=keywords_dict or {},
+        )
 
     def score_paper_with_keywords(
         self, title: str, authors: str, abstract: str, keywords_dict: Dict[str, float]
     ) -> WeightedScoreResponse:
-        """
-        使用加权关键词系统对论文进行评分。
-
-        评分公式:
-        总分 = Σ(关键词相关度 × 关键词权重) + 作者附加分
-
-        参数:
-            title (str): 论文标题
-            authors (str): 作者列表（逗号分隔）
-            abstract (str): 论文摘要
-            keywords_dict (Dict[str, float]): 关键词-权重字典
-
-        返回:
-            WeightedScoreResponse: 包含详细评分信息的响应对象
-        """
-        # 计算总权重和及格分
         total_weight = sum(keywords_dict.values())
         passing_score = settings.calculate_passing_score(total_weight)
 
-        # 构建关键词列表字符串
         keywords_list = "\n".join(
             [f"  - {kw} (权重: {weight:.1f})" for kw, weight in keywords_dict.items()]
         )
-
-        # 构建专家作者列表字符串
         expert_authors_str = ", ".join(settings.EXPERT_AUTHORS) if settings.EXPERT_AUTHORS else "无"
 
         prompt = f"""你是一名学术论文评审专家。请基于以下关键词对论文进行相关性评分，并提取论文信息。
@@ -358,35 +525,23 @@ class AnalysisAgent:
         try:
             content = self._call_cheap_llm(prompt)
             content = self._clean_json_string(content)
+            data = json.loads(content)
 
-            try:
-                data = json.loads(content)
-            except json.JSONDecodeError as json_err:
-                logger.error(f"JSON解析失败: {json_err}")
-                logger.error(f"原始内容（前500字符）: {content[:500]}")
-                raise
-
-            # 解析评分结果
             keyword_scores = data.get("keyword_scores", {})
             expert_authors_found = data.get("expert_authors_found", [])
             reasoning = data.get("reasoning", "无详细理由")
             tldr = data.get("tldr", "无摘要")
             extracted_keywords = data.get("extracted_keywords", [])
 
-            # 计算加权总分
             weighted_score = sum(
                 keyword_scores.get(kw, 0) * weight for kw, weight in keywords_dict.items()
             )
 
-            # 计算作者附加分
             author_bonus = 0.0
             if settings.ENABLE_AUTHOR_BONUS and expert_authors_found:
                 author_bonus = len(expert_authors_found) * settings.AUTHOR_BONUS_POINTS
 
-            # 计算总分
             total_score = weighted_score + author_bonus
-
-            # 判断是否及格
             is_qualified = total_score >= passing_score
 
             logger.info(
@@ -403,6 +558,7 @@ class AnalysisAgent:
                 reasoning=reasoning,
                 tldr=tldr,
                 extracted_keywords=extracted_keywords,
+                scoring_method="keyword_weighted",
             )
 
         except Exception as e:
@@ -411,7 +567,6 @@ class AnalysisAgent:
 
             traceback.print_exc()
 
-            # 返回默认低分
             return WeightedScoreResponse(
                 total_score=0.0,
                 keyword_scores={kw: 0.0 for kw in keywords_dict.keys()},
@@ -422,22 +577,194 @@ class AnalysisAgent:
                 reasoning=f"评分失败: {str(e)}",
                 tldr="评分失败，无法生成摘要",
                 extracted_keywords=[],
+                scoring_method="keyword_weighted",
             )
 
-    # ======================================================================
-    # 摘要翻译
-    # ======================================================================
+    def score_paper_with_committee(
+        self,
+        paper_id: str,
+        title: str,
+        abstract: str,
+        source: str,
+        categories: Optional[List[str]] = None,
+    ) -> WeightedScoreResponse:
+        system_prompt, user_prompt = self._build_mlsys_prompts(title, abstract, source, categories)
+        raw_rows: List[Dict[str, Any]] = []
+        judgments: List[Dict[str, Any]] = []
+
+        for model_name in settings.MLSYS_COMMITTEE_MODELS:
+            latency = 0.0
+            usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            raw_text = ""
+            error = ""
+
+            if self.committee_failures.get(model_name, 0) >= settings.MLSYS_CIRCUIT_BREAKER_THRESHOLD:
+                error = (
+                    f"circuit_breaker_open_after_{self.committee_failures[model_name]}_consecutive_failures"
+                )
+                fallback = self._make_fallback_committee_judgment(
+                    paper_id=paper_id,
+                    title=title,
+                    abstract=abstract,
+                    source=source,
+                    categories=categories,
+                    model_name=model_name,
+                    error=error,
+                    latency=latency,
+                    usage=usage,
+                )
+                raw_rows.append(
+                    {
+                        "paper_id": paper_id,
+                        "title": title,
+                        "abstract": abstract or "",
+                        "source": source,
+                        "categories": categories or [],
+                        "model": model_name,
+                        "raw_response": raw_text,
+                        "latency_seconds": round(latency, 4),
+                        "error": error,
+                        **usage,
+                    }
+                )
+                judgments.append(fallback)
+                continue
+
+            try:
+                raw_text, latency, usage = self._call_committee_model(
+                    model_name, system_prompt, user_prompt
+                )
+                parsed = self._parse_model_json(raw_text)
+                self.committee_failures[model_name] = 0
+
+                base_score = self._safe_int(
+                    parsed.get("base_score"), int(settings.MLSYS_FALLBACK_SCORE)
+                )
+                preference_bonus = self._safe_int(parsed.get("preference_bonus"), 0)
+                final_score = float(base_score + preference_bonus)
+                passed = final_score >= float(settings.MLSYS_PASSING_SCORE)
+
+                judgments.append(
+                    {
+                        "paper_id": paper_id,
+                        "title": title,
+                        "abstract": abstract or "",
+                        "source": source,
+                        "categories": categories or [],
+                        "model": model_name,
+                        "paper_type": parsed.get("paper_type", ""),
+                        "base_score": base_score,
+                        "preference_bonus": preference_bonus,
+                        "final_score": final_score,
+                        "pass": passed,
+                        "reason": parsed.get("reason", ""),
+                        "latency_seconds": round(latency, 4),
+                        "fallback_due_to_error": False,
+                        "fallback_error": "",
+                        **usage,
+                    }
+                )
+            except Exception as exc:
+                error = str(exc)
+                self.committee_failures[model_name] = self.committee_failures.get(model_name, 0) + 1
+                fallback = self._make_fallback_committee_judgment(
+                    paper_id=paper_id,
+                    title=title,
+                    abstract=abstract,
+                    source=source,
+                    categories=categories,
+                    model_name=model_name,
+                    error=error,
+                    latency=latency,
+                    usage=usage,
+                )
+                judgments.append(fallback)
+                logger.warning(f"委员会模型评分失败 [{model_name}] [{title[:50]}]: {error}")
+
+            raw_rows.append(
+                {
+                    "paper_id": paper_id,
+                    "title": title,
+                    "abstract": abstract or "",
+                    "source": source,
+                    "categories": categories or [],
+                    "model": model_name,
+                    "raw_response": raw_text,
+                    "latency_seconds": round(latency, 4),
+                    "error": error,
+                    **usage,
+                }
+            )
+
+        successful_rows = [row for row in judgments if not row.get("fallback_due_to_error")]
+        successful_model_count = len(successful_rows)
+        fallback_model_count = len(judgments) - successful_model_count
+        pass_votes = sum(1 for row in successful_rows if row.get("pass"))
+        fail_votes = successful_model_count - pass_votes
+        total_score = (
+            sum(float(row.get("final_score", 0)) for row in judgments) / len(judgments)
+            if judgments
+            else float(settings.MLSYS_FALLBACK_SCORE)
+        )
+        passing_score = float(settings.MLSYS_PASSING_SCORE)
+
+        if successful_model_count < 2:
+            is_qualified = False
+        elif pass_votes > fail_votes:
+            is_qualified = True
+        elif pass_votes < fail_votes:
+            is_qualified = False
+        else:
+            is_qualified = total_score >= passing_score
+
+        agreement_ratio = (
+            max(pass_votes, fail_votes) / successful_model_count if successful_model_count else 0.0
+        )
+        paper_types = [row.get("paper_type", "") for row in successful_rows if row.get("paper_type")]
+        aggregate_paper_type = Counter(paper_types).most_common(1)[0][0] if paper_types else ""
+        reasoning = self._summarize_committee_reasons(judgments, is_qualified, total_score)
+
+        summary_row = {
+            "paper_id": paper_id,
+            "title": title,
+            "source": source,
+            "categories": categories or [],
+            "scoring_method": "mlsys_multi_model",
+            "total_score": round(total_score, 4),
+            "passing_score": passing_score,
+            "is_qualified": is_qualified,
+            "successful_model_count": successful_model_count,
+            "fallback_model_count": fallback_model_count,
+            "agreement_ratio": round(agreement_ratio, 4),
+            "aggregate_paper_type": aggregate_paper_type,
+            "models": [row.get("model") for row in judgments],
+            "passes": [bool(row.get("pass")) for row in judgments],
+        }
+        self._persist_committee_artifacts(raw_rows, judgments, summary_row)
+
+        logger.info(
+            f"委员会评分完成 [{title[:50]}]: 均分={total_score:.2f}, 及格线={passing_score:.1f}, {'✅及格' if is_qualified else '❌未及格'}"
+        )
+
+        return WeightedScoreResponse(
+            total_score=total_score,
+            keyword_scores={},
+            author_bonus=0.0,
+            expert_authors_found=[],
+            passing_score=passing_score,
+            is_qualified=is_qualified,
+            reasoning=reasoning,
+            tldr="",
+            extracted_keywords=[],
+            scoring_method="mlsys_multi_model",
+            model_judgments=judgments,
+            successful_model_count=successful_model_count,
+            fallback_model_count=fallback_model_count,
+            agreement_ratio=agreement_ratio,
+            aggregate_paper_type=aggregate_paper_type,
+        )
 
     def translate_abstract(self, abstract: str) -> str:
-        """
-        将英文摘要翻译为中文。
-
-        参数:
-            abstract (str): 英文摘要
-
-        返回:
-            str: 中文翻译，失败时返回空字符串
-        """
         prompt = f"""请将以下学术论文摘要翻译为中文。要求：
 1. 保持学术术语的准确性
 2. 语句通顺流畅
@@ -452,31 +779,13 @@ class AnalysisAgent:
             translation = self._call_cheap_llm_plain(prompt)
             logger.info(f"摘要翻译完成 [{abstract[:30]}...]")
             return translation
-
         except Exception as e:
             logger.error(f"摘要翻译失败: {e}")
             return ""
 
-    # ======================================================================
-    # 深度分析（使用新模板系统）
-    # ======================================================================
-
     def deep_analyze(
         self, title: str, pdf_url: str, abstract: str, fallback_to_abstract: bool = True
     ) -> Optional[Dict[str, Any]]:
-        """
-        对论文进行深度分析（使用新的模板系统）。
-
-        参数:
-            title (str): 论文标题
-            pdf_url (str): PDF下载URL
-            abstract (str): 论文摘要（作为降级方案）
-            fallback_to_abstract (bool): PDF下载失败时是否使用摘要
-
-        返回:
-            Optional[Dict]: 分析结果字典，失败时返回None
-        """
-        # 尝试下载并解析PDF
         pdf_text = self._download_and_parse_pdf(pdf_url)
 
         if not pdf_text:
@@ -487,14 +796,10 @@ class AnalysisAgent:
                 logger.error(f"PDF解析失败 [{title[:50]}]，且未启用降级方案")
                 return None
 
-        # 从新模板获取配置
         modules = self.deep_template.get("modules", [])
         prompts_config = self.deep_template.get("prompts", {})
-
-        # 获取启用的模块
         enabled_modules = [m for m in modules if m.get("enabled", True)]
 
-        # 构建字段提示词字符串
         field_prompts_lines = []
         output_fields = []
 
@@ -503,30 +808,25 @@ class AnalysisAgent:
             module_prompt = module.get("prompt", "")
 
             if module_id == "custom_questions":
-                # 处理自定义问题
                 questions = module.get("questions", [])
                 if questions:
-                    field_prompts_lines.append(f"\n自定义问题:")
+                    field_prompts_lines.append("\n自定义问题:")
                     for i, q in enumerate(questions, 1):
                         field_prompts_lines.append(f"{i}. {q}")
                     output_fields.append(
-                        f'  "custom_answers": {{"问题1": "回答1", "问题2": "回答2", ...}}'
+                        '  "custom_answers": {"问题1": "回答1", "问题2": "回答2", ...}'
                     )
             else:
-                # 普通模块
                 field_prompts_lines.append(f"\n{module_id}: {module_prompt}")
                 output_fields.append(f'  "{module_id}": "..."')
 
         fields_str = ",\n".join(output_fields)
         field_prompts_str = "\n".join(field_prompts_lines)
 
-        # 使用模板中的系统提示词和用户提示词模板
         system_prompt = prompts_config.get("analysis_system", "你是一名学术论文分析专家。")
         analysis_template = prompts_config.get("analysis_template", "")
 
-        # 构建最终prompt
         if analysis_template:
-            # 使用模板中的格式
             prompt = analysis_template.format(
                 title=title,
                 content=pdf_text[:15000],
@@ -536,7 +836,6 @@ class AnalysisAgent:
                 field_prompts=field_prompts_str,
             )
         else:
-            # 备用格式
             prompt = f"""论文标题: {title}
 
 论文内容:
@@ -554,23 +853,14 @@ class AnalysisAgent:
 }}
 """
 
-        # 添加输出格式说明
         prompt += f"\n\n{prompts_config.get('field_output_format', '使用JSON格式输出。')}"
 
         try:
             content = self._call_smart_llm(prompt)
             content = self._clean_json_string(content)
-
-            try:
-                result = json.loads(content)
-            except json.JSONDecodeError as json_err:
-                logger.error(f"JSON解析失败: {json_err}")
-                logger.error(f"原始内容（前500字符）: {content[:500]}")
-                raise
-
+            result = json.loads(content)
             logger.info(f"深度分析完成 [{title[:50]}]")
             return result
-
         except Exception as e:
             logger.error(f"深度分析失败 [{title[:50]}]: {e}")
             import traceback
@@ -579,40 +869,15 @@ class AnalysisAgent:
             return None
 
     def _download_and_parse_pdf(self, pdf_url: str) -> Optional[str]:
-        """
-        下载PDF并提取文本内容。
-
-        根据配置选择解析方式:
-        - mineru: 优先使用 MinerU 云端 API 解析，失败时自动降级到 PyMuPDF
-        - pymupdf: 直接使用 PyMuPDF 本地解析
-
-        参数:
-            pdf_url (str): PDF下载URL
-
-        返回:
-            Optional[str]: 提取的文本内容，失败时返回None
-        """
-        # 根据配置决定解析方式
         if settings.PDF_PARSER_MODE == "mineru":
-            # 尝试 MinerU 云端解析
             text = self._parse_pdf_with_mineru(pdf_url)
             if text:
                 return text
-            # MinerU 失败，降级到 PyMuPDF
             logger.info("降级使用 PyMuPDF 本地解析")
 
         return self._parse_pdf_with_pymupdf(pdf_url)
 
     def _parse_pdf_with_mineru(self, pdf_url: str) -> Optional[str]:
-        """
-        使用 MinerU API 解析 PDF。
-
-        参数:
-            pdf_url (str): PDF下载URL
-
-        返回:
-            Optional[str]: 提取的文本内容，失败时返回None
-        """
         if not self.mineru_parser.is_available():
             if not self.mineru_parser.is_configured():
                 logger.warning("MinerU API 未配置（MINERU_API_KEY 为空），使用 PyMuPDF 本地解析")
@@ -624,20 +889,8 @@ class AnalysisAgent:
         return text
 
     def _parse_pdf_with_pymupdf(self, pdf_url: str) -> Optional[str]:
-        """
-        使用 PyMuPDF 本地解析 PDF。
-
-        参数:
-            pdf_url (str): PDF下载URL
-
-        返回:
-            Optional[str]: 提取的文本内容，失败时返回None
-        """
         try:
-            # 下载PDF（带自动重试）
             pdf_bytes = self._download_pdf_bytes(pdf_url)
-
-            # 保存到临时文件
             temp_pdf = (
                 settings.DOWNLOAD_DIR
                 / f"temp_{hashlib.md5(pdf_url.encode()).hexdigest()[:16]}_{threading.get_ident()}.pdf"
@@ -645,22 +898,19 @@ class AnalysisAgent:
             with open(temp_pdf, "wb") as f:
                 f.write(pdf_bytes)
 
-            # 解析PDF（前20页），使用 try/finally 确保资源释放和临时文件清理
             try:
                 with fitz.open(temp_pdf) as doc:
                     text = ""
                     for i, page in enumerate(doc):
-                        if i >= 20:  # 只读前20页
+                        if i >= 20:
                             break
                         text += page.get_text()
             finally:
-                # 无论解析成功与否均清理临时文件
                 if temp_pdf.exists():
                     temp_pdf.unlink()
 
             logger.info(f"PyMuPDF 解析成功，提取 {len(text)} 字符")
             return text
-
         except Exception as e:
             logger.error(f"PyMuPDF PDF下载/解析失败: {e}")
             return None

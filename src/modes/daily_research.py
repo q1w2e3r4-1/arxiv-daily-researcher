@@ -51,11 +51,14 @@ def _score_single_paper(
     线程安全：translation_cache 通过 cache_lock 保护，
     mark_as_processed 由 base_source 内部锁保护。
     """
-    score_response = analysis_agent.score_paper_with_keywords(
+    score_response = analysis_agent.score_paper(
+        paper_id=paper.paper_id,
         title=paper.title,
         authors=paper.get_authors_string(),
         abstract=paper.abstract,
         keywords_dict=all_keywords,
+        source=source,
+        categories=paper.categories,
     )
 
     abstract_cn = ""
@@ -168,7 +171,7 @@ class DailyResearchPipeline:
             keyword_agent = KeywordAgent()
             all_keywords = keyword_agent.get_all_keywords()
 
-            if not all_keywords:
+            if not all_keywords and not settings.is_committee_scoring_enabled():
                 logger.error("错误: 未找到任何关键词。请在 configs/config.json 中配置主要关键词。")
                 fail_result = RunResult(
                     run_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -193,11 +196,17 @@ class DailyResearchPipeline:
             logger.info(f"  - 总权重: {sum(all_keywords.values()):.2f}")
 
             total_weight = sum(all_keywords.values())
-            passing_score = settings.calculate_passing_score(total_weight)
-            logger.info(f"  - 动态及格分: {passing_score:.1f}")
-            logger.info(
-                f"  - 及格分公式: {settings.PASSING_SCORE_BASE} + {settings.PASSING_SCORE_WEIGHT_COEFFICIENT} × {total_weight:.1f}"
-            )
+            if settings.is_committee_scoring_enabled():
+                logger.info("  - 评分策略: MLSys 多模型委员会")
+                logger.info(f"  - 委员会模型: {', '.join(settings.MLSYS_COMMITTEE_MODELS)}")
+                logger.info(f"  - 固定通过分: {settings.MLSYS_PASSING_SCORE:.1f}")
+                logger.info(f"  - Fallback 分数: {settings.MLSYS_FALLBACK_SCORE:.1f}")
+            else:
+                passing_score = settings.calculate_passing_score(total_weight)
+                logger.info(f"  - 动态及格分: {passing_score:.1f}")
+                logger.info(
+                    f"  - 及格分公式: {settings.PASSING_SCORE_BASE} + {settings.PASSING_SCORE_WEIGHT_COEFFICIENT} × {total_weight:.1f}"
+                )
 
             # ==================== 阶段3: 抓取所有最新论文 ====================
             logger.info(">>> 阶段3: 从多个数据源抓取论文...")
@@ -285,7 +294,13 @@ class DailyResearchPipeline:
                 logger.info(f"  评分数据源 [{source}]: {len(papers)} 篇论文")
                 scored_papers = []
 
-                if settings.ENABLE_CONCURRENCY and len(papers) > 1:
+                use_scoring_concurrency = (
+                    settings.ENABLE_CONCURRENCY
+                    and len(papers) > 1
+                    and not settings.is_committee_scoring_enabled()
+                )
+
+                if use_scoring_concurrency:
                     logger.info(f"    使用并发模式 (workers={settings.CONCURRENCY_WORKERS})")
                     with tqdm(
                         total=len(papers), desc=f"📊 [{source}] 评分", unit="篇", ncols=100
@@ -316,6 +331,8 @@ class DailyResearchPipeline:
                                     logger.error(f"论文评分异常 ({paper.title[:30]}...): {e}")
                                 pbar.update(1)
                 else:
+                    if settings.is_committee_scoring_enabled() and len(papers) > 1:
+                        logger.info("    使用串行模式（MLSys 多模型委员会评分，避免共享接口过载）")
                     with tqdm(
                         total=len(papers), desc=f"📊 [{source}] 评分", unit="篇", ncols=100
                     ) as pbar:
@@ -525,12 +542,14 @@ class DailyResearchPipeline:
             all_scored_flat = []
             for source, scored_papers in scored_papers_by_source.items():
                 for p in scored_papers:
+                    score_response = p["score_response"]
                     all_scored_flat.append(
                         {
                             "title": p["title"],
-                            "score": p["score_response"].total_score,
+                            "score": score_response.total_score,
                             "source": source,
-                            "tldr": p["score_response"].tldr,
+                            "tldr": score_response.tldr,
+                            "reasoning": score_response.reasoning,
                             "url": p["url"],
                         }
                     )

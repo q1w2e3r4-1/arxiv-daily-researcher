@@ -355,11 +355,29 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "e.g., I study quantum error correction and topological quantum computing...",
     },
     # ── scoring.py ───────────────────────────────────────────────────────
-    "scoring_title": {"zh": "通过分数公式", "en": "Passing Score Formula"},
+    "scoring_title": {"zh": "评分策略", "en": "Scoring Strategy"},
     "scoring_hint": {
-        "zh": "通过分数 = 基础分 + 权重系数 × 关键词权重总和",
-        "en": "Passing Score = Base Score + Weight Coefficient x Sum(Keyword Weights)",
+        "zh": "可选择传统关键词加权评分，或 4 模型 MLSys 委员会评分。",
+        "en": "Choose either legacy keyword-weighted scoring or the 4-model MLSys committee scorer.",
     },
+    "scoring_method_label": {"zh": "评分方式", "en": "Scoring method"},
+    "scoring_method_keyword": {"zh": "关键词加权", "en": "Keyword weighted"},
+    "scoring_method_committee": {"zh": "MLSys 多模型", "en": "MLSys multi-model"},
+    "committee_title": {"zh": "MLSys 多模型评分", "en": "MLSys committee scoring"},
+    "committee_hint": {
+        "zh": "4 个模型顺序打分；重复失败时记为 fallback 分数。",
+        "en": "Four models score sequentially; repeated failures fall back to the configured score.",
+    },
+    "committee_models_label": {"zh": "委员会模型（每行一个）", "en": "Committee models (one per line)"},
+    "committee_models_help": {
+        "zh": "按顺序调用这些模型。建议共享同一兼容 OpenAI 的低成本接口。",
+        "en": "These models are called in order. They typically share the same OpenAI-compatible cheap endpoint.",
+    },
+    "committee_pass_score_label": {"zh": "通过分数", "en": "Passing score"},
+    "committee_fallback_score_label": {"zh": "Fallback 分数", "en": "Fallback score"},
+    "committee_breaker_label": {"zh": "熔断阈值", "en": "Circuit-breaker threshold"},
+    "committee_export_artifacts": {"zh": "导出调试产物", "en": "Export debug artifacts"},
+    "keyword_formula_title": {"zh": "关键词通过分数公式", "en": "Keyword passing formula"},
     "base_score_label": {"zh": "基础分", "en": "Base Score"},
     "weight_coeff_label": {"zh": "权重系数", "en": "Weight Coefficient"},
     "max_score_per_kw_label": {

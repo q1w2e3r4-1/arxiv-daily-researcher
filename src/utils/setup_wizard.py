@@ -429,60 +429,141 @@ def section_scoring(existing_config: dict) -> dict:
 
     flat = flatten_config_dict(existing_config) if existing_config else {}
 
-    console.print("[dim]Passing score = base_score + weight_coefficient * sum(keyword_weights)[/]")
-    console.print()
-
-    base = questionary.text(
-        "Passing score base:",
-        default=str(flat.get("passing_score_base", 5.0)),
-        validate=lambda x: True if _is_float(x) else "Please enter a valid number",
+    scoring_method = questionary.select(
+        "Scoring method:",
+        choices=[
+            questionary.Choice("Keyword weighted", value="keyword_weighted"),
+            questionary.Choice("MLSys multi-model committee", value="mlsys_multi_model"),
+        ],
+        default=flat.get("scoring_method", "keyword_weighted"),
         style=WIZARD_STYLE,
     ).ask()
-    if base is None:
+    if scoring_method is None:
         raise KeyboardInterrupt
 
-    coeff = questionary.text(
-        "Passing score weight coefficient:",
-        default=str(flat.get("passing_score_weight_coefficient", 3.0)),
-        validate=lambda x: True if _is_float(x) else "Please enter a valid number",
-        style=WIZARD_STYLE,
-    ).ask()
-    if coeff is None:
-        raise KeyboardInterrupt
+    result = {"scoring_method": scoring_method}
 
-    enable_bonus = questionary.confirm(
-        "Enable author bonus scoring?",
-        default=flat.get("enable_author_bonus", False),
-        style=WIZARD_STYLE,
-    ).ask()
-    if enable_bonus is None:
-        raise KeyboardInterrupt
-
-    result = {
-        "passing_score_base": float(base),
-        "passing_score_weight_coefficient": float(coeff),
-        "enable_author_bonus": enable_bonus,
-    }
-
-    if enable_bonus:
-        authors_str = questionary.text(
-            "Expert authors (comma-separated):",
-            default=", ".join(flat.get("expert_authors", [])),
+    if scoring_method == "mlsys_multi_model":
+        models_default = "\n".join(flat.get("mlsys_committee_models", ["glm-5.1", "minimax-m2.7", "qwen3.5-27b", "deepseek-v3.2"]))
+        models_text = questionary.text(
+            "Committee models (one per line):",
+            default=models_default,
             style=WIZARD_STYLE,
         ).ask()
-        if authors_str is None:
+        if models_text is None:
             raise KeyboardInterrupt
-        result["expert_authors"] = [a.strip() for a in authors_str.split(",") if a.strip()]
 
-        bonus = questionary.text(
-            "Author bonus points:",
-            default=str(flat.get("author_bonus_points", 5.0)),
+        pass_score = questionary.text(
+            "Committee passing score:",
+            default=str(flat.get("mlsys_passing_score", 6.0)),
             validate=lambda x: True if _is_float(x) else "Please enter a valid number",
             style=WIZARD_STYLE,
         ).ask()
-        if bonus is None:
+        if pass_score is None:
             raise KeyboardInterrupt
-        result["author_bonus_points"] = float(bonus)
+
+        fallback_score = questionary.text(
+            "Fallback score after repeated failure:",
+            default=str(flat.get("mlsys_fallback_score", 5.0)),
+            validate=lambda x: True if _is_float(x) else "Please enter a valid number",
+            style=WIZARD_STYLE,
+        ).ask()
+        if fallback_score is None:
+            raise KeyboardInterrupt
+
+        breaker = questionary.text(
+            "Circuit-breaker threshold:",
+            default=str(flat.get("mlsys_circuit_breaker_threshold", 3)),
+            validate=lambda x: True if x.isdigit() and int(x) > 0 else "Please enter a positive integer",
+            style=WIZARD_STYLE,
+        ).ask()
+        if breaker is None:
+            raise KeyboardInterrupt
+
+        export_artifacts = questionary.confirm(
+            "Export committee debug artifacts under data/?",
+            default=flat.get("mlsys_export_artifacts", True),
+            style=WIZARD_STYLE,
+        ).ask()
+        if export_artifacts is None:
+            raise KeyboardInterrupt
+
+        result.update(
+            {
+                "mlsys_committee_models": [line.strip() for line in models_text.split("\n") if line.strip()],
+                "mlsys_passing_score": float(pass_score),
+                "mlsys_fallback_score": float(fallback_score),
+                "mlsys_circuit_breaker_threshold": int(breaker),
+                "mlsys_export_artifacts": export_artifacts,
+                "enable_author_bonus": flat.get("enable_author_bonus", False),
+                "author_bonus_points": flat.get("author_bonus_points", 5.0),
+                "expert_authors": flat.get("expert_authors", []),
+                "passing_score_base": flat.get("passing_score_base", 5.0),
+                "passing_score_weight_coefficient": flat.get("passing_score_weight_coefficient", 3.0),
+            }
+        )
+    else:
+        console.print("[dim]Passing score = base_score + weight_coefficient * sum(keyword_weights)[/]")
+        console.print()
+
+        base = questionary.text(
+            "Passing score base:",
+            default=str(flat.get("passing_score_base", 5.0)),
+            validate=lambda x: True if _is_float(x) else "Please enter a valid number",
+            style=WIZARD_STYLE,
+        ).ask()
+        if base is None:
+            raise KeyboardInterrupt
+
+        coeff = questionary.text(
+            "Passing score weight coefficient:",
+            default=str(flat.get("passing_score_weight_coefficient", 3.0)),
+            validate=lambda x: True if _is_float(x) else "Please enter a valid number",
+            style=WIZARD_STYLE,
+        ).ask()
+        if coeff is None:
+            raise KeyboardInterrupt
+
+        enable_bonus = questionary.confirm(
+            "Enable author bonus scoring?",
+            default=flat.get("enable_author_bonus", False),
+            style=WIZARD_STYLE,
+        ).ask()
+        if enable_bonus is None:
+            raise KeyboardInterrupt
+
+        result.update(
+            {
+                "passing_score_base": float(base),
+                "passing_score_weight_coefficient": float(coeff),
+                "enable_author_bonus": enable_bonus,
+                "mlsys_committee_models": flat.get("mlsys_committee_models", ["glm-5.1", "minimax-m2.7", "qwen3.5-27b", "deepseek-v3.2"]),
+                "mlsys_passing_score": flat.get("mlsys_passing_score", 6.0),
+                "mlsys_fallback_score": flat.get("mlsys_fallback_score", 5.0),
+                "mlsys_circuit_breaker_threshold": flat.get("mlsys_circuit_breaker_threshold", 3),
+                "mlsys_export_artifacts": flat.get("mlsys_export_artifacts", True),
+            }
+        )
+
+        if enable_bonus:
+            authors_str = questionary.text(
+                "Expert authors (comma-separated):",
+                default=", ".join(flat.get("expert_authors", [])),
+                style=WIZARD_STYLE,
+            ).ask()
+            if authors_str is None:
+                raise KeyboardInterrupt
+            result["expert_authors"] = [a.strip() for a in authors_str.split(",") if a.strip()]
+
+            bonus = questionary.text(
+                "Author bonus points:",
+                default=str(flat.get("author_bonus_points", 5.0)),
+                validate=lambda x: True if _is_float(x) else "Please enter a valid number",
+                style=WIZARD_STYLE,
+            ).ask()
+            if bonus is None:
+                raise KeyboardInterrupt
+            result["author_bonus_points"] = float(bonus)
 
     include_all = questionary.confirm(
         "Include all papers in report (not just passing)?",

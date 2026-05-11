@@ -538,7 +538,7 @@ class NotifierAgent:
                 title = p.get("title", "")[:60]
                 score = p.get("score", 0)
                 src = p.get("source", "").upper()
-                tldr = p.get("tldr", "")[:80]
+                tldr = (p.get("tldr") or p.get("reasoning", ""))[:80]
                 url = p.get("url", "")
                 top_lines.append(f"> **{i}.** `{src}` {title}")
                 top_lines.append(f'> <font color="comment">Score: {score:.1f} | {tldr}</font>')
@@ -599,7 +599,7 @@ class NotifierAgent:
                 title = p.get("title", "")[:60]
                 score = p.get("score", 0)
                 src = p.get("source", "").upper()
-                tldr = p.get("tldr", "")[:80]
+                tldr = (p.get("tldr") or p.get("reasoning", ""))[:80]
                 url = p.get("url", "")
                 top_lines.append(f"> **{i}.** `{src}` {title}")
                 top_lines.append(f'> <font color="comment">Score: {score:.1f} | {tldr}</font>')
@@ -733,7 +733,7 @@ class NotifierAgent:
                 title = p.get("title", "")[:80]
                 score = p.get("score", 0)
                 src = p.get("source", "").upper()
-                tldr = p.get("tldr", "")[:120]
+                tldr = (p.get("tldr") or p.get("reasoning", ""))[:120]
                 url = p.get("url", "")
                 lines.append(f"  {i}. [{src}] {title}")
                 lines.append(f"     Score: {score:.1f} | {tldr}")
@@ -830,7 +830,7 @@ class NotifierAgent:
             title = self._html_escape(p.get("title", "")[:100])
             score = p.get("score", 0)
             src = self._html_escape(p.get("source", "").upper())
-            tldr = self._html_escape(p.get("tldr", "")[:200])
+            tldr = self._html_escape((p.get("tldr") or p.get("reasoning", ""))[:200])
             url = p.get("url", "")
             link_html = (
                 (

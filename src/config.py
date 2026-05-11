@@ -222,6 +222,19 @@ class Settings(BaseSettings):
     # 报告配置
     INCLUDE_ALL_IN_REPORT: bool = True
 
+    # 评分策略配置
+    SCORING_METHOD: str = "keyword_weighted"
+    MLSYS_COMMITTEE_MODELS: List[str] = [
+        "glm-5.1",
+        "minimax-m2.7",
+        "qwen3.5-27b",
+        "deepseek-v3.2",
+    ]
+    MLSYS_PASSING_SCORE: float = 6.0
+    MLSYS_FALLBACK_SCORE: float = 5.0
+    MLSYS_CIRCUIT_BREAKER_THRESHOLD: int = 3
+    MLSYS_EXPORT_ARTIFACTS: bool = True
+
     # ==================== LLM配置 ====================
     # 低成本LLM：用于快速初步筛选和关键词生成
     CHEAP_LLM: LLMConfig = Field(default_factory=lambda: LLMConfig(api_key="sk-dummy"))
@@ -364,6 +377,27 @@ class Settings(BaseSettings):
 
                 # 报告配置
                 self.INCLUDE_ALL_IN_REPORT = score_cfg.get("include_all_in_report", True)
+
+                # 评分策略
+                self.SCORING_METHOD = score_cfg.get("strategy", self.SCORING_METHOD)
+
+                if "mlsys_multi_model" in score_cfg:
+                    committee_cfg = score_cfg["mlsys_multi_model"]
+                    self.MLSYS_COMMITTEE_MODELS = committee_cfg.get(
+                        "committee_models", self.MLSYS_COMMITTEE_MODELS
+                    )
+                    self.MLSYS_PASSING_SCORE = committee_cfg.get(
+                        "passing_score", self.MLSYS_PASSING_SCORE
+                    )
+                    self.MLSYS_FALLBACK_SCORE = committee_cfg.get(
+                        "fallback_score", self.MLSYS_FALLBACK_SCORE
+                    )
+                    self.MLSYS_CIRCUIT_BREAKER_THRESHOLD = committee_cfg.get(
+                        "circuit_breaker_threshold", self.MLSYS_CIRCUIT_BREAKER_THRESHOLD
+                    )
+                    self.MLSYS_EXPORT_ARTIFACTS = committee_cfg.get(
+                        "export_artifacts", self.MLSYS_EXPORT_ARTIFACTS
+                    )
 
             # 加载路径配置
             if "paths" in config:
@@ -605,6 +639,10 @@ class Settings(BaseSettings):
         return (
             self.PASSING_SCORE_BASE + self.PASSING_SCORE_WEIGHT_COEFFICIENT * total_keyword_weight
         )
+
+    def is_committee_scoring_enabled(self) -> bool:
+        """是否启用 MLSys 多模型委员会评分。"""
+        return self.SCORING_METHOD == "mlsys_multi_model"
 
     def ensure_directories(self):
         """

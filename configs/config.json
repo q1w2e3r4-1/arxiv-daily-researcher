@@ -72,6 +72,7 @@
   // Scoring Configuration
   // ==================================================
   "scoring_settings": {
+    "strategy": "keyword_weighted",
     "keyword_relevance_score": {
       "max_score_per_keyword": 10
     },
@@ -83,6 +84,18 @@
     "passing_score_formula": {
       "base_score": 1.5,
       "weight_coefficient": 2.5
+    },
+    "mlsys_multi_model": {
+      "committee_models": [
+        "glm-5.1",
+        "minimax-m2.7",
+        "qwen3.5-27b",
+        "deepseek-v3.2"
+      ],
+      "passing_score": 6.0,
+      "fallback_score": 5.0,
+      "circuit_breaker_threshold": 3,
+      "export_artifacts": true
     },
     "include_all_in_report": true
   },
