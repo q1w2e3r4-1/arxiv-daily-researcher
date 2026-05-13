@@ -310,7 +310,8 @@ class ScoringRenderer(BaseModuleRenderer):
                 )
                 if preliminary_score is not None:
                     detail_lines.append(f"- **初筛均分**: {float(preliminary_score):.2f}")
-                detail_lines.append(f"- **SMART_LLM 复核**: {'已触发' if smart_review_used else '未触发'}")
+                if smart_review_used:
+                    detail_lines.append("- **SMART_LLM 复核**: 已触发")
                 if smart_review_used and smart_review_model:
                     detail_lines.append(f"- **复核模型**: {smart_review_model}")
                 detail_lines.append("")
@@ -338,10 +339,9 @@ class ScoringRenderer(BaseModuleRenderer):
                     for row in judgments:
                         fallback = " fallback" if row.get('fallback_due_to_error') else ""
                         status = "model-pass" if row.get('pass') else "model-fail"
-                        stage = "first-pass" if row.get('stage') == 'cheap_committee' else "smart-review"
                         error = row.get('fallback_error', '') or row.get('reason', '')
                         detail_lines.append(
-                            f"- **{stage}:{row.get('model', '')}**: {float(row.get('final_score', 0)):.1f} | {status}{fallback} | {error}"
+                            f"- **{row.get('model', '')}**: {float(row.get('final_score', 0)):.1f} | {status}{fallback} | {error}"
                         )
                     detail_lines.append("")
 

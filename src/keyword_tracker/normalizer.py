@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from openai import OpenAI
 
 from config import settings
+from utils.llm_request_pool import call_chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +102,9 @@ class KeywordNormalizer:
         prompt = self._build_prompt(keywords, existing_canonical)
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
+            response, _ = call_chat_completion(
+                client=self.client,
+                model_name=self.model,
                 messages=[
                     {
                         "role": "system",
@@ -110,6 +112,7 @@ class KeywordNormalizer:
                     },
                     {"role": "user", "content": prompt},
                 ],
+                operation_label="keyword_normalization",
                 temperature=0.3,
                 response_format={"type": "json_object"},
             )

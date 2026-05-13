@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, Set, List
 from openai import OpenAI
 from config import settings
+from utils.llm_request_pool import call_chat_completion
 from difflib import SequenceMatcher
 
 logger = logging.getLogger(__name__)
@@ -317,9 +318,11 @@ class KeywordAgent:
 """
 
             try:
-                response = self.client.chat.completions.create(
-                    model=settings.CHEAP_LLM.model_name,
+                response, _ = call_chat_completion(
+                    client=self.client,
+                    model_name=settings.CHEAP_LLM.model_name,
                     messages=[{"role": "user", "content": prompt}],
+                    operation_label="keyword_extraction",
                     temperature=0.3,
                     response_format={"type": "json_object"},
                 )

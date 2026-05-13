@@ -18,6 +18,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_l
 
 from config import settings
 from parsers.mineru_parser import MineruParser
+from utils.llm_request_pool import call_chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -129,9 +130,11 @@ class AnalysisAgent:
         )
         def _do_call():
             try:
-                resp = self.cheap_client.chat.completions.create(
-                    model=settings.CHEAP_LLM.model_name,
+                resp, _ = call_chat_completion(
+                    client=self.cheap_client,
+                    model_name=settings.CHEAP_LLM.model_name,
                     messages=[{"role": "user", "content": prompt}],
+                    operation_label="keyword_weighted_scoring",
                     temperature=settings.CHEAP_LLM.temperature,
                     response_format={"type": "json_object"},
                 )
@@ -165,9 +168,11 @@ class AnalysisAgent:
         )
         def _do_call():
             try:
-                resp = self.cheap_client.chat.completions.create(
-                    model=selected_model,
+                resp, _ = call_chat_completion(
+                    client=self.cheap_client,
+                    model_name=selected_model,
                     messages=[{"role": "user", "content": prompt}],
+                    operation_label="cheap_plain_text",
                     temperature=0.3,
                 )
             except Exception:
@@ -199,9 +204,11 @@ class AnalysisAgent:
         )
         def _do_call():
             try:
-                resp = self.smart_client.chat.completions.create(
-                    model=settings.SMART_LLM.model_name,
+                resp, _ = call_chat_completion(
+                    client=self.smart_client,
+                    model_name=settings.SMART_LLM.model_name,
                     messages=[{"role": "user", "content": prompt}],
+                    operation_label="deep_analysis",
                     temperature=settings.SMART_LLM.temperature,
                     response_format={"type": "json_object"},
                 )
@@ -346,12 +353,14 @@ class AnalysisAgent:
         for attempt in range(settings.RETRY_MAX_ATTEMPTS):
             started = time.perf_counter()
             try:
-                resp = client.chat.completions.create(
-                    model=model_name,
+                resp, _ = call_chat_completion(
+                    client=client,
+                    model_name=model_name,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
+                    operation_label=stage_label,
                     temperature=0,
                     response_format={"type": "json_object"},
                 )
@@ -892,10 +901,6 @@ class AnalysisAgent:
                 f"SMART_LLM 复核已触发 [{paper_id}] [{title[:80]}] | 初筛均分={preliminary_score:.2f} | 区间=[{settings.MLSYS_SMART_REVIEW_MIN_SCORE:.1f}, {settings.MLSYS_SMART_REVIEW_MAX_SCORE:.1f}] | 复核模型={smart_review_model}"
             )
             score_one_model(model_name=smart_review_model, stage="smart_review", client=self.smart_client)
-        else:
-            logger.info(
-                f"SMART_LLM 复核未触发 [{paper_id}] [{title[:80]}] | 初筛均分={preliminary_score:.2f} | 区间=[{settings.MLSYS_SMART_REVIEW_MIN_SCORE:.1f}, {settings.MLSYS_SMART_REVIEW_MAX_SCORE:.1f}]"
-            )
 
         successful_rows = [row for row in judgments if not row.get("fallback_due_to_error")]
         successful_model_count = len(successful_rows)
@@ -941,7 +946,7 @@ class AnalysisAgent:
 
         score_breakdown = "; ".join(
             (
-                f"{row.get('stage', '')}:{row.get('model', '')}="
+                f"{row.get('model', '')}="
                 f"{float(row.get('final_score', 0)):.1f}"
                 f" ({'fallback' if row.get('fallback_due_to_error') else 'ok'})"
             )

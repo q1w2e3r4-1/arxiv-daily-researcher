@@ -70,6 +70,39 @@ def render(_env_values: dict, config_values: dict):
 
     st.divider()
 
+    # ---- LLM Request Pool ----
+    st.markdown(f'<p class="section-title">🕒 {t("llm_request_pool_title")}</p>', unsafe_allow_html=True)
+    st.markdown(f'<p class="hint-text">{t("llm_request_pool_hint")}</p>', unsafe_allow_html=True)
+
+    col_pool_1, col_pool_2, col_pool_3 = st.columns(3)
+    with col_pool_1:
+        st.toggle(
+            t("llm_request_pool_enabled"),
+            value=flat.get("llm_request_pool_enabled", True),
+            key="llm_request_pool_enabled",
+        )
+    with col_pool_2:
+        st.number_input(
+            t("llm_requests_per_minute_label"),
+            min_value=1,
+            max_value=120,
+            value=flat.get("llm_requests_per_minute", 10),
+            key="llm_requests_per_minute",
+            help=t("llm_requests_per_minute_help"),
+        )
+    with col_pool_3:
+        st.number_input(
+            t("llm_request_pool_slow_wait_label"),
+            min_value=0.0,
+            max_value=60.0,
+            value=float(flat.get("llm_request_pool_log_slow_wait_seconds", 1.0)),
+            step=0.5,
+            key="llm_request_pool_log_slow_wait_seconds",
+            help=t("llm_request_pool_slow_wait_help"),
+        )
+
+    st.divider()
+
     # ---- Report & Token Tracking ----
     st.markdown(
         f'<p class="section-title">📊 {t("advanced_reports_title")}</p>',
@@ -228,6 +261,11 @@ def collect(_env_values: dict, _config_values: dict) -> dict:
         "mineru_model_version": st.session_state.get("mineru_model_version", "pipeline"),
         "concurrency_enabled": st.session_state.get("concurrency_enabled", False),
         "concurrency_workers": st.session_state.get("concurrency_workers", 3),
+        "llm_request_pool_enabled": st.session_state.get("llm_request_pool_enabled", True),
+        "llm_requests_per_minute": st.session_state.get("llm_requests_per_minute", 10),
+        "llm_request_pool_log_slow_wait_seconds": st.session_state.get(
+            "llm_request_pool_log_slow_wait_seconds", 1.0
+        ),
         "token_tracking_enabled": st.session_state.get("token_tracking_enabled", True),
         "auto_update_enabled": st.session_state.get("auto_update_enabled", True),
         "keyword_tracker_enabled": st.session_state.get("keyword_tracker_enabled", True),

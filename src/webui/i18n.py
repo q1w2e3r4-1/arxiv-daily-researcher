@@ -503,6 +503,22 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "zh": "推荐：3-5，过高可能触发速率限制。",
         "en": "Recommended: 3-5. Higher values may trigger rate limits.",
     },
+    "llm_request_pool_title": {"zh": "LLM 请求池", "en": "LLM Request Pool"},
+    "llm_request_pool_hint": {
+        "zh": "所有 CHEAP_LLM 与 SMART_LLM 请求共用一个全局节流器，按固定速率排队发出。",
+        "en": "All CHEAP_LLM and SMART_LLM requests share one global throttler and are paced through a single queue.",
+    },
+    "llm_request_pool_enabled": {"zh": "启用全局请求池", "en": "Enable global request pool"},
+    "llm_requests_per_minute_label": {"zh": "每分钟请求数", "en": "Requests per minute"},
+    "llm_requests_per_minute_help": {
+        "zh": "所有大模型请求共享这个总额度，重试也计入其中。",
+        "en": "All LLM requests share this total budget, and retries count against it too.",
+    },
+    "llm_request_pool_slow_wait_label": {"zh": "慢等待日志阈值（秒）", "en": "Slow-wait log threshold (s)"},
+    "llm_request_pool_slow_wait_help": {
+        "zh": "排队等待达到该时长后，以 info 级别记录；更短等待只写 debug。",
+        "en": "Queue waits at or above this threshold log at info level; shorter waits stay at debug.",
+    },
     "advanced_reports_title": {"zh": "功能开关", "en": "Feature Toggles"},
     "html_reports_label": {"zh": "HTML 报告", "en": "HTML reports"},
     "token_tracking_label": {"zh": "Token 用量追踪", "en": "Token tracking"},

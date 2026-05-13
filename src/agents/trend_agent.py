@@ -17,6 +17,7 @@ from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
 from config import settings
+from utils.llm_request_pool import call_chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +28,17 @@ logger = logging.getLogger(__name__)
     before_sleep=before_sleep_log(logger, logging.WARNING),
     reraise=True,
 )
-def _llm_call_with_retry(client, model_name: str, temperature: float, prompt: str) -> str:
+def _llm_call_with_retry(
+    client, model_name: str, temperature: float, prompt: str, operation_label: str
+) -> str:
     """带自动重试的 LLM 调用（模块级，避免每次调用重建 retry 装饰器）。"""
     estimated_prompt_tokens = len(prompt) // 4  # 用于重试失败时的近似计数
     try:
-        resp = client.chat.completions.create(
-            model=model_name,
+        resp, _ = call_chat_completion(
+            client=client,
+            model_name=model_name,
             messages=[{"role": "user", "content": prompt}],
+            operation_label=operation_label,
             temperature=temperature,
         )
     except Exception:
@@ -85,13 +90,21 @@ class TrendAgent:
     def _call_cheap_llm_plain(self, prompt: str) -> str:
         """调用低成本LLM（纯文本模式），带自动重试。"""
         return _llm_call_with_retry(
-            self.cheap_client, settings.CHEAP_LLM.model_name, settings.CHEAP_LLM.temperature, prompt
+            self.cheap_client,
+            settings.CHEAP_LLM.model_name,
+            settings.CHEAP_LLM.temperature,
+            prompt,
+            operation_label="trend_tldr",
         )
 
     def _call_smart_llm_plain(self, prompt: str) -> str:
         """调用高性能LLM（纯文本模式），带自动重试。"""
         return _llm_call_with_retry(
-            self.smart_client, settings.SMART_LLM.model_name, settings.SMART_LLM.temperature, prompt
+            self.smart_client,
+            settings.SMART_LLM.model_name,
+            settings.SMART_LLM.temperature,
+            prompt,
+            operation_label="trend_analysis",
         )
 
     # ======================================================================

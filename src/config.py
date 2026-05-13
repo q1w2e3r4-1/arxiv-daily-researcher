@@ -154,6 +154,11 @@ class Settings(BaseSettings):
     ENABLE_CONCURRENCY: bool = False  # 是否启用并发
     CONCURRENCY_WORKERS: int = 3  # 并发线程数（建议不超过5）
 
+    # ==================== LLM 请求池配置 ====================
+    LLM_REQUEST_POOL_ENABLED: bool = True
+    LLM_REQUESTS_PER_MINUTE: int = 10
+    LLM_REQUEST_POOL_LOG_SLOW_WAIT_SECONDS: float = 1.0
+
     # ==================== 报告配置 ====================
     ENABLE_HTML_REPORT: bool = True  # 是否同时生成HTML格式报告
     ENABLE_MARKDOWN_REPORT: bool = True  # 是否生成Markdown格式报告
@@ -493,6 +498,19 @@ class Settings(BaseSettings):
                 conc_cfg = config["concurrency"]
                 self.ENABLE_CONCURRENCY = conc_cfg.get("enabled", False)
                 self.CONCURRENCY_WORKERS = conc_cfg.get("workers", 3)
+
+            # 加载 LLM 请求池配置
+            if "llm_request_pool" in config:
+                pool_cfg = config["llm_request_pool"]
+                self.LLM_REQUEST_POOL_ENABLED = pool_cfg.get(
+                    "enabled", self.LLM_REQUEST_POOL_ENABLED
+                )
+                self.LLM_REQUESTS_PER_MINUTE = pool_cfg.get(
+                    "requests_per_minute", self.LLM_REQUESTS_PER_MINUTE
+                )
+                self.LLM_REQUEST_POOL_LOG_SLOW_WAIT_SECONDS = pool_cfg.get(
+                    "log_slow_wait_seconds", self.LLM_REQUEST_POOL_LOG_SLOW_WAIT_SECONDS
+                )
 
             # 加载报告设置
             if "report_settings" in config:

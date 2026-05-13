@@ -122,6 +122,7 @@ SECTION_COMMENTS = {
     "retry": "Retry Configuration",
     "logging": "Logging Configuration",
     "concurrency": "Concurrency Configuration",
+    "llm_request_pool": "LLM Request Pool Configuration",
     "pdf_parser": "PDF Parser Configuration",
     "report_settings": "Report Configuration",
     "auto_update": "Auto-update Configuration",
@@ -369,6 +370,9 @@ def build_config_dict(
     log_keep_days: int = 30,
     concurrency_enabled: bool = False,
     concurrency_workers: int = 3,
+    llm_request_pool_enabled: bool = True,
+    llm_requests_per_minute: int = 10,
+    llm_request_pool_log_slow_wait_seconds: float = 1.0,
     pdf_parser_mode: str = "mineru",
     mineru_model_version: str = "pipeline",
     mineru_poll_interval: int = 3,
@@ -535,6 +539,11 @@ def build_config_dict(
         "concurrency": {
             "enabled": concurrency_enabled,
             "workers": concurrency_workers,
+        },
+        "llm_request_pool": {
+            "enabled": llm_request_pool_enabled,
+            "requests_per_minute": llm_requests_per_minute,
+            "log_slow_wait_seconds": llm_request_pool_log_slow_wait_seconds,
         },
         "pdf_parser": {
             "mode": pdf_parser_mode,
@@ -717,6 +726,14 @@ def flatten_config_dict(config: Dict[str, Any]) -> Dict[str, Any]:
     flat["concurrency_enabled"] = cc.get("enabled", False)
     flat["concurrency_workers"] = cc.get("workers", 3)
 
+    # LLM request pool
+    llm_pool = config.get("llm_request_pool", {})
+    flat["llm_request_pool_enabled"] = llm_pool.get("enabled", True)
+    flat["llm_requests_per_minute"] = llm_pool.get("requests_per_minute", 10)
+    flat["llm_request_pool_log_slow_wait_seconds"] = llm_pool.get(
+        "log_slow_wait_seconds", 1.0
+    )
+
     # PDF parser
     pp = config.get("pdf_parser", {})
     flat["pdf_parser_mode"] = pp.get("mode", "mineru")
@@ -791,10 +808,14 @@ def validate_llm_connection(api_key: str, base_url: str, model_name: str) -> Tup
     try:
         from openai import OpenAI
 
+        from utils.llm_request_pool import call_chat_completion
+
         client = OpenAI(api_key=api_key, base_url=base_url, timeout=15)
-        response = client.chat.completions.create(
-            model=model_name,
+        response, _ = call_chat_completion(
+            client=client,
+            model_name=model_name,
             messages=[{"role": "user", "content": "Hi"}],
+            operation_label="config_connection_test",
             max_tokens=5,
         )
         return True, f"Connection successful! Model: {response.model}"

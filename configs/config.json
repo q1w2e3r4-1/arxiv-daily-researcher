@@ -206,6 +206,15 @@
   },
 
   // ==================================================
+  // LLM Request Pool Configuration
+  // ==================================================
+  "llm_request_pool": {
+    "enabled": true,
+    "requests_per_minute": 10,
+    "log_slow_wait_seconds": 1.0
+  },
+
+  // ==================================================
   // PDF Parser Configuration
   // ==================================================
   "pdf_parser": {
