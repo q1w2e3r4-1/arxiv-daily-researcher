@@ -54,6 +54,21 @@ class Stage2Response(BaseModel):
     custom_answers: Optional[Dict[str, str]] = None
 
 
+class CommitteeCallError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        attempt_count: int,
+        retry_events: List[Dict[str, Any]],
+        request_latency_seconds: float,
+    ):
+        super().__init__(message)
+        self.attempt_count = attempt_count
+        self.retry_count = max(0, attempt_count - 1)
+        self.retry_events = retry_events
+        self.request_latency_seconds = request_latency_seconds
+
+
 class AnalysisAgent:
     def __init__(self):
         self.cheap_client = OpenAI(
@@ -73,6 +88,7 @@ class AnalysisAgent:
             settings.DATA_DIR / "scoring_artifacts" / "mlsys_multi_model" / self.committee_run_id
         )
         self.committee_failures = {model: 0 for model in settings.MLSYS_COMMITTEE_MODELS}
+        self.committee_failures_lock = threading.Lock()
         self.committee_artifact_lock = threading.Lock()
 
         if settings.MLSYS_EXPORT_ARTIFACTS:
@@ -129,7 +145,8 @@ class AnalysisAgent:
 
         return _do_call()
 
-    def _call_cheap_llm_plain(self, prompt: str) -> str:
+    def _call_cheap_llm_plain(self, prompt: str, model_name: Optional[str] = None) -> str:
+        selected_model = model_name or settings.CHEAP_LLM.model_name
         estimated_prompt_tokens = len(prompt) // 4
 
         @retry(
@@ -141,7 +158,7 @@ class AnalysisAgent:
         def _do_call():
             try:
                 resp = self.cheap_client.chat.completions.create(
-                    model=settings.CHEAP_LLM.model_name,
+                    model=selected_model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
                 )
@@ -149,13 +166,13 @@ class AnalysisAgent:
                 if settings.TOKEN_TRACKING_ENABLED:
                     from utils.token_counter import token_counter
 
-                    token_counter.add(settings.CHEAP_LLM.model_name, estimated_prompt_tokens, 0)
+                    token_counter.add(selected_model, estimated_prompt_tokens, 0)
                 raise
             if settings.TOKEN_TRACKING_ENABLED and resp.usage:
                 from utils.token_counter import token_counter
 
                 token_counter.add(
-                    settings.CHEAP_LLM.model_name,
+                    selected_model,
                     resp.usage.prompt_tokens,
                     resp.usage.completion_tokens,
                 )
@@ -305,10 +322,16 @@ class AnalysisAgent:
         return system_prompt, user_prompt
 
     def _call_committee_model(
-        self, model_name: str, system_prompt: str, user_prompt: str
-    ) -> tuple[str, float, Dict[str, int]]:
+        self,
+        model_name: str,
+        system_prompt: str,
+        user_prompt: str,
+        paper_id: str,
+        title: str,
+    ) -> tuple[str, float, Dict[str, int], int, int, List[Dict[str, Any]]]:
         estimated_prompt_tokens = (len(system_prompt) + len(user_prompt)) // 4
         last_error: Exception | None = None
+        retry_events: List[Dict[str, Any]] = []
 
         for attempt in range(settings.RETRY_MAX_ATTEMPTS):
             started = time.perf_counter()
@@ -336,18 +359,41 @@ class AnalysisAgent:
                     else:
                         token_counter.add(model_name, estimated_prompt_tokens, len(content) // 4)
 
-                return content, latency, usage
+                return content, latency, usage, attempt, attempt + 1, retry_events
             except Exception as exc:
                 last_error = exc
+                latency = time.perf_counter() - started
+                error_text = str(exc)
                 if settings.TOKEN_TRACKING_ENABLED:
                     from utils.token_counter import token_counter
 
                     token_counter.add(model_name, estimated_prompt_tokens, 0)
                 if attempt == settings.RETRY_MAX_ATTEMPTS - 1:
-                    raise
+                    logger.warning(
+                        f"委员会模型最终失败 [{model_name}] [{paper_id}] [{title[:80]}] | "
+                        f"attempt={attempt + 1}/{settings.RETRY_MAX_ATTEMPTS} | error={error_text}"
+                    )
+                    raise CommitteeCallError(
+                        message=error_text,
+                        attempt_count=attempt + 1,
+                        retry_events=retry_events,
+                        request_latency_seconds=round(latency, 4),
+                    )
                 wait_seconds = min(
                     settings.RETRY_MAX_WAIT,
                     max(settings.RETRY_MIN_WAIT, 2**attempt) + random.random(),
+                )
+                retry_event = {
+                    "attempt": attempt + 1,
+                    "error": error_text,
+                    "request_latency_seconds": round(latency, 4),
+                    "backoff_seconds": round(wait_seconds, 4),
+                }
+                retry_events.append(retry_event)
+                logger.warning(
+                    f"委员会模型重试 [{model_name}] [{paper_id}] [{title[:80]}] | "
+                    f"attempt={attempt + 1}/{settings.RETRY_MAX_ATTEMPTS} | "
+                    f"request_latency={latency:.2f}s | backoff={wait_seconds:.2f}s | error={error_text}"
                 )
                 time.sleep(wait_seconds)
 
@@ -389,6 +435,9 @@ class AnalysisAgent:
         error: str,
         latency: float,
         usage: Dict[str, int],
+        retry_count: int,
+        attempt_count: int,
+        retry_events: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         fallback_score = float(settings.MLSYS_FALLBACK_SCORE)
         return {
@@ -405,6 +454,9 @@ class AnalysisAgent:
             "pass": False,
             "reason": f"Fallback score after repeated API failure: {error}",
             "latency_seconds": round(latency, 4),
+            "retry_count": retry_count,
+            "attempt_count": attempt_count,
+            "retry_events": retry_events,
             "fallback_due_to_error": True,
             "fallback_error": error,
             **usage,
@@ -605,11 +657,15 @@ class AnalysisAgent:
             usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
             raw_text = ""
             error = ""
+            retry_count = 0
+            attempt_count = 0
+            retry_events: List[Dict[str, Any]] = []
 
-            if self.committee_failures.get(model_name, 0) >= settings.MLSYS_CIRCUIT_BREAKER_THRESHOLD:
-                error = (
-                    f"circuit_breaker_open_after_{self.committee_failures[model_name]}_consecutive_failures"
-                )
+            with self.committee_failures_lock:
+                failure_count = self.committee_failures.get(model_name, 0)
+
+            if failure_count >= settings.MLSYS_CIRCUIT_BREAKER_THRESHOLD:
+                error = f"circuit_breaker_open_after_{failure_count}_consecutive_failures"
                 fallback = self._make_fallback_committee_judgment(
                     paper_id=paper_id,
                     title=title,
@@ -620,6 +676,9 @@ class AnalysisAgent:
                     error=error,
                     latency=latency,
                     usage=usage,
+                    retry_count=retry_count,
+                    attempt_count=attempt_count,
+                    retry_events=retry_events,
                 )
                 raw_rows.append(
                     {
@@ -631,6 +690,9 @@ class AnalysisAgent:
                         "model": model_name,
                         "raw_response": raw_text,
                         "latency_seconds": round(latency, 4),
+                        "retry_count": retry_count,
+                        "attempt_count": attempt_count,
+                        "retry_events": retry_events,
                         "error": error,
                         **usage,
                     }
@@ -639,11 +701,12 @@ class AnalysisAgent:
                 continue
 
             try:
-                raw_text, latency, usage = self._call_committee_model(
-                    model_name, system_prompt, user_prompt
+                raw_text, latency, usage, retry_count, attempt_count, retry_events = self._call_committee_model(
+                    model_name, system_prompt, user_prompt, paper_id, title
                 )
                 parsed = self._parse_model_json(raw_text)
-                self.committee_failures[model_name] = 0
+                with self.committee_failures_lock:
+                    self.committee_failures[model_name] = 0
 
                 base_score = self._safe_int(
                     parsed.get("base_score"), int(settings.MLSYS_FALLBACK_SCORE)
@@ -667,6 +730,9 @@ class AnalysisAgent:
                         "pass": passed,
                         "reason": parsed.get("reason", ""),
                         "latency_seconds": round(latency, 4),
+                        "retry_count": retry_count,
+                        "attempt_count": attempt_count,
+                        "retry_events": retry_events,
                         "fallback_due_to_error": False,
                         "fallback_error": "",
                         **usage,
@@ -674,7 +740,13 @@ class AnalysisAgent:
                 )
             except Exception as exc:
                 error = str(exc)
-                self.committee_failures[model_name] = self.committee_failures.get(model_name, 0) + 1
+                if isinstance(exc, CommitteeCallError):
+                    latency = exc.request_latency_seconds
+                    retry_count = exc.retry_count
+                    attempt_count = exc.attempt_count
+                    retry_events = exc.retry_events
+                with self.committee_failures_lock:
+                    self.committee_failures[model_name] = self.committee_failures.get(model_name, 0) + 1
                 fallback = self._make_fallback_committee_judgment(
                     paper_id=paper_id,
                     title=title,
@@ -685,6 +757,9 @@ class AnalysisAgent:
                     error=error,
                     latency=latency,
                     usage=usage,
+                    retry_count=retry_count,
+                    attempt_count=attempt_count,
+                    retry_events=retry_events,
                 )
                 judgments.append(fallback)
                 logger.warning(f"委员会模型评分失败 [{model_name}] [{title[:50]}]: {error}")
@@ -699,6 +774,7 @@ class AnalysisAgent:
                     "model": model_name,
                     "raw_response": raw_text,
                     "latency_seconds": round(latency, 4),
+                    "retry_count": retry_count,
                     "error": error,
                     **usage,
                 }
@@ -742,8 +818,16 @@ class AnalysisAgent:
         }
         self._persist_committee_artifacts(raw_rows, judgments, summary_row)
 
+        score_breakdown = "; ".join(
+            (
+                f"{row.get('model', '')}="
+                f"{float(row.get('final_score', 0)):.1f}"
+                f" ({'fallback' if row.get('fallback_due_to_error') else 'ok'})"
+            )
+            for row in judgments
+        )
         logger.info(
-            f"委员会评分完成 [{title[:50]}]: 均分={total_score:.2f}, 及格线={passing_score:.1f}, {'✅及格' if is_qualified else '❌未及格'}"
+            f"委员会评分完成 [{title}]:\n明细=[{score_breakdown}] | 均分={total_score:.2f} | 及格线={passing_score:.1f} | {'✅及格' if is_qualified else '❌未及格'}"
         )
 
         return WeightedScoreResponse(
@@ -764,6 +848,17 @@ class AnalysisAgent:
             aggregate_paper_type=aggregate_paper_type,
         )
 
+    def _get_translation_model_name(self) -> str:
+        # CHEAP_LLM 可能承载多个委员会模型；翻译是单模型辅助任务，优先选择 qwen3.5-27b，
+        # 因为它通常是这里最快的选项。若未配置该模型，则回退到列表中的第一个可用模型。
+        cheap_models = settings._split_model_names(settings.CHEAP_LLM.model_name)
+        committee_models = list(settings.MLSYS_COMMITTEE_MODELS or [])
+        candidates = cheap_models or committee_models or [settings.CHEAP_LLM.model_name]
+        for model_name in candidates:
+            if model_name == "qwen3.5-27b":
+                return model_name
+        return candidates[0]
+
     def translate_abstract(self, abstract: str) -> str:
         prompt = f"""请将以下学术论文摘要翻译为中文。要求：
 1. 保持学术术语的准确性
@@ -775,12 +870,13 @@ class AnalysisAgent:
 
 请直接输出中文翻译，不要添加任何说明或标记。"""
 
+        model_name = self._get_translation_model_name()
         try:
-            translation = self._call_cheap_llm_plain(prompt)
-            logger.info(f"摘要翻译完成 [{abstract[:30]}...]")
+            translation = self._call_cheap_llm_plain(prompt, model_name=model_name)
+            logger.info(f"摘要翻译完成 [{model_name}] [{abstract[:30]}...]")
             return translation
         except Exception as e:
-            logger.error(f"摘要翻译失败: {e}")
+            logger.error(f"摘要翻译失败 [{model_name}]: {e}")
             return ""
 
     def deep_analyze(

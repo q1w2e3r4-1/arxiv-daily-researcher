@@ -46,11 +46,15 @@ def _score_single_paper(
     search_agent,
 ):
     """
-    对单篇论文进行评分和翻译（供并发调用）。
+    对单篇论文进行评分（供并发调用）。
 
     线程安全：translation_cache 通过 cache_lock 保护，
     mark_as_processed 由 base_source 内部锁保护。
     """
+    logger.info(
+        f"开始评分 [{source}] {paper.paper_id} | 标题: {paper.title}"
+    )
+
     score_response = analysis_agent.score_paper(
         paper_id=paper.paper_id,
         title=paper.title,
@@ -61,29 +65,13 @@ def _score_single_paper(
         categories=paper.categories,
     )
 
-    abstract_cn = ""
-    if paper.abstract and paper.abstract.strip():
-        abstract_hash = hashlib.md5(paper.abstract.encode("utf-8")).hexdigest()
-
-        with cache_lock:
-            cached = translation_cache.get(abstract_hash)
-
-        if cached is not None:
-            abstract_cn = cached
-            logger.debug(f"使用缓存的翻译: {paper.title[:30]}...")
-        else:
-            abstract_cn = analysis_agent.translate_abstract(paper.abstract)
-            with cache_lock:
-                translation_cache[abstract_hash] = abstract_cn
-            logger.debug(f"翻译并缓存: {paper.title[:30]}...")
-
     scored = {
         "paper_metadata": paper,
         "paper_id": paper.paper_id,
         "title": paper.title,
         "authors": paper.get_authors_string(),
         "abstract": paper.abstract,
-        "abstract_cn": abstract_cn,
+        "abstract_cn": "",
         "url": paper.url,
         "pdf_url": paper.pdf_url,
         "published": paper.published_date.strftime("%Y-%m-%d") if paper.published_date else "N/A",
@@ -294,11 +282,7 @@ class DailyResearchPipeline:
                 logger.info(f"  评分数据源 [{source}]: {len(papers)} 篇论文")
                 scored_papers = []
 
-                use_scoring_concurrency = (
-                    settings.ENABLE_CONCURRENCY
-                    and len(papers) > 1
-                    and not settings.is_committee_scoring_enabled()
-                )
+                use_scoring_concurrency = settings.ENABLE_CONCURRENCY and len(papers) > 1
 
                 if use_scoring_concurrency:
                     logger.info(f"    使用并发模式 (workers={settings.CONCURRENCY_WORKERS})")
@@ -331,8 +315,6 @@ class DailyResearchPipeline:
                                     logger.error(f"论文评分异常 ({paper.title[:30]}...): {e}")
                                 pbar.update(1)
                 else:
-                    if settings.is_committee_scoring_enabled() and len(papers) > 1:
-                        logger.info("    使用串行模式（MLSys 多模型委员会评分，避免共享接口过载）")
                     with tqdm(
                         total=len(papers), desc=f"📊 [{source}] 评分", unit="篇", ncols=100
                     ) as pbar:
@@ -353,9 +335,27 @@ class DailyResearchPipeline:
                             scored_papers.append(result)
                             pbar.update(1)
 
-                scored_papers_by_source[source] = scored_papers
+                qualified_count = 0
+                for scored in scored_papers:
+                    if not scored["score_response"].is_qualified:
+                        continue
+                    qualified_count += 1
+                    abstract = scored.get("abstract", "")
+                    if not abstract or not abstract.strip():
+                        continue
+                    abstract_hash = hashlib.md5(abstract.encode("utf-8")).hexdigest()
+                    with cache_lock:
+                        cached = translation_cache.get(abstract_hash)
+                    if cached is not None:
+                        scored["abstract_cn"] = cached
+                        logger.debug(f"使用缓存的翻译: {scored['title'][:30]}...")
+                    else:
+                        scored["abstract_cn"] = analysis_agent.translate_abstract(abstract)
+                        with cache_lock:
+                            translation_cache[abstract_hash] = scored["abstract_cn"]
+                        logger.debug(f"翻译并缓存: {scored['title'][:30]}...")
 
-                qualified_count = sum(1 for p in scored_papers if p["score_response"].is_qualified)
+                scored_papers_by_source[source] = scored_papers
                 logger.info(f"    [{source}] 评分完成: {qualified_count}/{len(papers)} 篇及格")
 
             if translation_cache:
