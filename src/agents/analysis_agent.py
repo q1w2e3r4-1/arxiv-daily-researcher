@@ -888,7 +888,14 @@ class AnalysisAgent:
             and settings.MLSYS_SMART_REVIEW_MIN_SCORE <= preliminary_score <= settings.MLSYS_SMART_REVIEW_MAX_SCORE
         )
         if smart_review_used:
+            logger.info(
+                f"SMART_LLM 复核已触发 [{paper_id}] [{title[:80]}] | 初筛均分={preliminary_score:.2f} | 区间=[{settings.MLSYS_SMART_REVIEW_MIN_SCORE:.1f}, {settings.MLSYS_SMART_REVIEW_MAX_SCORE:.1f}] | 复核模型={smart_review_model}"
+            )
             score_one_model(model_name=smart_review_model, stage="smart_review", client=self.smart_client)
+        else:
+            logger.info(
+                f"SMART_LLM 复核未触发 [{paper_id}] [{title[:80]}] | 初筛均分={preliminary_score:.2f} | 区间=[{settings.MLSYS_SMART_REVIEW_MIN_SCORE:.1f}, {settings.MLSYS_SMART_REVIEW_MAX_SCORE:.1f}]"
+            )
 
         successful_rows = [row for row in judgments if not row.get("fallback_due_to_error")]
         successful_model_count = len(successful_rows)

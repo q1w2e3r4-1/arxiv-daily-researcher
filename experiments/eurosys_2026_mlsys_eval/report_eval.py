@@ -12,6 +12,10 @@ from common import DATA_ROOT, EXP_ROOT, copy_summary_to_report_dirs, read_jsonl,
 
 PASSING_SCORE = 6.0
 FALLBACK_SCORE = 5.0
+STAGED_CHEAP_MODELS = ["minimax-m2.7", "qwen3.5-27b", "deepseek-v3.2"]
+STAGED_SMART_MODEL = "glm-5.1"
+SMART_REVIEW_MIN_SCORE = 5.0
+SMART_REVIEW_MAX_SCORE = 7.0
 
 
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
@@ -53,6 +57,59 @@ def quartiles(values: list[float]) -> tuple[float, float]:
         return values[0], values[0]
     q1, _, q3 = statistics.quantiles(values, n=4, method="inclusive")
     return float(q1), float(q3)
+
+
+def compute_staged_committee(
+    judgment_by_model: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    missing_models = [
+        model
+        for model in [*STAGED_CHEAP_MODELS, STAGED_SMART_MODEL]
+        if model not in judgment_by_model
+    ]
+    if missing_models:
+        raise RuntimeError(f"Missing judgments for staged committee models: {missing_models}")
+
+    cheap_scores = [float(judgment_by_model[model].get("final_score", 0.0) or 0.0) for model in STAGED_CHEAP_MODELS]
+    preliminary_score = sum(cheap_scores) / len(cheap_scores) if cheap_scores else FALLBACK_SCORE
+    smart_review_used = SMART_REVIEW_MIN_SCORE <= preliminary_score <= SMART_REVIEW_MAX_SCORE
+
+    final_models = list(STAGED_CHEAP_MODELS)
+    if smart_review_used:
+        final_models.append(STAGED_SMART_MODEL)
+
+    final_scores = [float(judgment_by_model[model].get("final_score", 0.0) or 0.0) for model in final_models]
+    final_passes = [bool(judgment_by_model[model].get("pass")) for model in final_models]
+    fallback_count = sum(1 for model in final_models if judgment_by_model[model].get("fallback_due_to_error"))
+    final_score = sum(final_scores) / len(final_scores) if final_scores else FALLBACK_SCORE
+    final_pred = final_score >= PASSING_SCORE
+    supporting_model_count = sum(1 for passed in final_passes if passed)
+    opposing_model_count = len(final_passes) - supporting_model_count
+    agreement_ratio = max(supporting_model_count, opposing_model_count) / len(final_passes) if final_passes else 0.0
+
+    historical_scores = [
+        float(judgment.get("final_score", 0.0) or 0.0) for judgment in judgment_by_model.values()
+    ]
+    historical_avg_score = sum(historical_scores) / len(historical_scores) if historical_scores else FALLBACK_SCORE
+    historical_avg_pred = historical_avg_score >= PASSING_SCORE
+
+    return {
+        "preliminary_score": preliminary_score,
+        "smart_review_used": smart_review_used,
+        "smart_review_model": STAGED_SMART_MODEL if smart_review_used else "",
+        "final_model_count": len(final_models),
+        "agreement_pattern": f"{supporting_model_count}/{len(final_models)}",
+        "committee_avg_score": final_score,
+        "committee_avg_pred": final_pred,
+        "supporting_model_count": supporting_model_count,
+        "opposing_model_count": opposing_model_count,
+        "successful_model_count": len(final_models) - fallback_count,
+        "fallback_model_count": fallback_count,
+        "agreement_ratio_diagnostic": agreement_ratio,
+        "historical_4_model_avg_score": historical_avg_score,
+        "historical_4_model_avg_pred": historical_avg_pred,
+        "prediction_changed_vs_historical": final_pred != historical_avg_pred,
+    }
 
 
 def build_score_distribution_stats(per_paper_rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -156,7 +213,7 @@ def render_run_markdown(
         f"- Excluded ML-for-Systems titles: {len(labels_manifest.get('excluded_positive_titles', []))}"
     )
     lines.append(
-        "- Committee rule: average the 4 final scores; fallback failures contribute score 5; pass if average >= 6."
+        "- Committee rule: average the 3 cheap-model final scores first; if that preliminary average falls within [5, 7], add one glm-5.1 SMART review and average again; fallback failures contribute score 5; pass if final average >= 6."
     )
     lines.append("")
     lines.append("## Metrics")
@@ -173,7 +230,7 @@ def render_run_markdown(
     lines.append("| Rule | Acc | Prec | Recall | F1 | Pass rate |")
     lines.append("|------|-----|------|--------|----|-----------|")
     lines.append(
-        f"| Average of 4 final scores | {committee_metric['accuracy']:.3f} | {committee_metric['precision']:.3f} | {committee_metric['recall']:.3f} | {committee_metric['f1']:.3f} | {committee_metric['pass_rate']:.3f} |"
+        f"| Staged 3 cheap + 1 smart-on-borderline | {committee_metric['accuracy']:.3f} | {committee_metric['precision']:.3f} | {committee_metric['recall']:.3f} | {committee_metric['f1']:.3f} | {committee_metric['pass_rate']:.3f} |"
     )
     lines.append("")
     for model_name, details in per_model_details.items():
@@ -278,7 +335,7 @@ def render_formal_markdown(
         "- 本报告**没有**使用此前遗留的 5 篇 smoke `summary.md/html` 作为统计来源；所有指标均从 `labels.csv`、`metrics.csv`、`model_outputs/*/judgments.jsonl`、`invalid_responses.jsonl` 重新计算。"
     )
     lines.append(
-        "- 本报告中的委员会结果已经切换到当前生产逻辑：**4 个模型最终分数直接取平均；fallback 失败按 5 分计入平均；平均分 >= 6 即通过**。"
+        "- 本报告中的委员会结果已经切换到当前生产逻辑：**先对 3 个 cheap 模型均分；若初筛均分落入 [5, 7]，再额外加入 1 次 glm-5.1 复核并重新取平均；fallback 失败按 5 分计入平均；最终平均分 >= 6 即通过**。"
     )
     lines.append("- 本报告反映的是这轮 138 篇评测在新委员会规则下的后处理结果；单模型原始 judgments 未被改写。")
     lines.append("")
@@ -325,15 +382,17 @@ def render_formal_markdown(
     lines.append("| 方法 | TP | TN | FP | FN | Accuracy | Precision | Recall | F1 | Pass Rate |")
     lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     lines.append(
-        f"| 4 模型平均分委员会 | {committee_metric['tp']} | {committee_metric['tn']} | {committee_metric['fp']} | {committee_metric['fn']} | {committee_metric['accuracy']:.4f} | {committee_metric['precision']:.4f} | {committee_metric['recall']:.4f} | {committee_metric['f1']:.4f} | {committee_metric['pass_rate']:.4f} |"
+        f"| 分阶段委员会（3 cheap + 边界 glm 复核） | {committee_metric['tp']} | {committee_metric['tn']} | {committee_metric['fp']} | {committee_metric['fn']} | {committee_metric['accuracy']:.4f} | {committee_metric['precision']:.4f} | {committee_metric['recall']:.4f} | {committee_metric['f1']:.4f} | {committee_metric['pass_rate']:.4f} |"
     )
     lines.append("")
     lines.append("委员会规则：")
     lines.append("")
-    lines.append("- 4 个模型各自产生一个最终分数，系统直接对这 4 个分数求平均。")
-    lines.append("- 若平均分 >= 6，则委员会判为正类；否则判为负类。")
+    lines.append("- 先由 `minimax-m2.7`、`qwen3.5-27b`、`deepseek-v3.2` 产生第一阶段最终分数，并计算初筛均分。")
+    lines.append("- 若初筛均分落入 `[5, 7]`，则额外加入一次 `glm-5.1` 复核，并对参与本次判定的分数重新取平均。")
+    lines.append("- 若最终平均分 >= 6，则委员会判为正类；否则判为负类。")
     lines.append("- 若某个模型连续重试后仍失败，则该模型记为 fallback=5，并继续计入最终平均分。")
     lines.append("- 单模型的 `pass/fail` 只保留为诊断信息，不再参与最终通过判定。")
+    lines.append(f"- 本轮数据里实际触发 `glm-5.1` 复核的论文数：{committee_metric['smart_review_triggered_count']}。")
     lines.append("")
     best_single_accuracy = max(float(row["accuracy"]) for row in model_metrics_rows) if model_metrics_rows else 0.0
     if float(committee_metric["accuracy"]) < best_single_accuracy:
@@ -345,18 +404,20 @@ def render_formal_markdown(
     lines.append("")
     lines.append("## 5. 模型一致性（诊断）")
     lines.append("")
-    lines.append("| 支持通过的模型数 | 论文数 | 含义 |")
+    lines.append("| 支持通过 / 参与模型数 | 论文数 | 含义 |")
     lines.append("|---:|---:|---|")
     for row in agreement_rows:
         lines.append(
-            f"| {row['supporting_model_count']} | {row['paper_count']} | {row['meaning']} |"
+            f"| {row['agreement_pattern']} | {row['paper_count']} | {row['meaning']} |"
         )
+    lines.append("")
+    lines.append("这里的分母表示最终参与平均分判定的模型数：大多数论文只有 3 个 cheap 模型参与；只有边界样本才会升级为 4 个模型共同判定。")
     lines.append("")
     lines.append("这份一致性分布可以用来区分：")
     lines.append("")
-    lines.append("- `0/4` 或 `4/4`：高置信样本；")
-    lines.append("- `3/1` 或 `1/3`：边界样本；")
-    lines.append("- `2/2`：最值得人工复核的冲突样本。")
+    lines.append("- `0/3`、`3/3`、`0/4` 或 `4/4`：高置信样本；")
+    lines.append("- `1/3`、`2/3`、`1/4` 或 `3/4`：边界样本；")
+    lines.append("- `2/4`：最值得人工复核的对半分歧样本。")
     lines.append("")
     lines.append("## 6. 分数分布（基于委员会平均分）")
     lines.append("")
@@ -408,9 +469,9 @@ def render_formal_markdown(
     lines.append("## 9. 总结")
     lines.append("")
     lines.append("- 如果只选一个模型作为当前生产候选，`glm-5.1` 依然是本轮最优。")
-    lines.append("- 如果更看重“筛出可能漏标 / 误标的论文”，4 模型平均分委员会依然很有价值。")
+    lines.append("- 如果更看重“筛出可能漏标 / 误标的论文”，当前这套分阶段委员会依然很有价值。")
     lines.append(
-        "- 当前评测结果已经足够支持：将 4 模型委员会接入主流程进行 daily screening，同时在汇报中注明 ground truth 不是人工金标准，存在少量系统性误标。"
+        "- 当前评测结果已经足够支持：将这套 cheap-first、borderline 再交给 `glm-5.1` 复核的委员会规则接入主流程进行 daily screening，同时在汇报中注明 ground truth 不是人工金标准，存在少量系统性误标。"
     )
     return "\n".join(lines) + "\n"
 
@@ -480,7 +541,7 @@ def main() -> None:
     per_paper_rows: list[dict[str, Any]] = []
     committee_predictions: list[bool] = []
     golds: list[bool] = []
-    agreement_buckets = {count: 0 for count in range(len(models) + 1)}
+    agreement_buckets: dict[str, int] = {}
 
     for label_row in labels_rows:
         paper_id = label_row["paper_id"]
@@ -492,38 +553,39 @@ def main() -> None:
             "title": title,
             "gold": gold,
         }
-        scores: list[float] = []
-        passes: list[bool] = []
-        fallback_count = 0
+        judgment_by_model: dict[str, dict[str, Any]] = {}
 
         for model in models:
             judgment = judgment_index[model].get(paper_id)
             if judgment is None:
                 raise RuntimeError(f"Missing judgment for {model} / {paper_id}")
+            judgment_by_model[model] = judgment
             slug = slugify_model(model)
             score = float(judgment.get("final_score", 0.0) or 0.0)
             passed = bool(judgment.get("pass"))
-            scores.append(score)
-            passes.append(passed)
-            fallback_count += 1 if judgment.get("fallback_due_to_error") else 0
             row[f"{slug}_score"] = score
             row[f"{slug}_pass"] = passed
 
-        committee_avg_score = sum(scores) / len(scores) if scores else FALLBACK_SCORE
-        committee_avg_pred = committee_avg_score >= PASSING_SCORE
-        supporting_model_count = sum(1 for passed in passes if passed)
-        opposing_model_count = len(passes) - supporting_model_count
-        agreement_ratio = max(supporting_model_count, opposing_model_count) / len(passes) if passes else 0.0
+        staged = compute_staged_committee(judgment_by_model)
+        supporting_model_count = int(staged["supporting_model_count"])
 
         row.update(
             {
-                "committee_avg_score": round(committee_avg_score, 4),
-                "committee_avg_pred": committee_avg_pred,
+                "preliminary_score": round(float(staged["preliminary_score"]), 4),
+                "smart_review_used": bool(staged["smart_review_used"]),
+                "smart_review_model": staged["smart_review_model"],
+                "final_model_count": int(staged["final_model_count"]),
+                "agreement_pattern": staged["agreement_pattern"],
+                "committee_avg_score": round(float(staged["committee_avg_score"]), 4),
+                "committee_avg_pred": bool(staged["committee_avg_pred"]),
                 "supporting_model_count": supporting_model_count,
-                "opposing_model_count": opposing_model_count,
-                "successful_model_count": len(passes) - fallback_count,
-                "fallback_model_count": fallback_count,
-                "agreement_ratio_diagnostic": round(agreement_ratio, 4),
+                "opposing_model_count": int(staged["opposing_model_count"]),
+                "successful_model_count": int(staged["successful_model_count"]),
+                "fallback_model_count": int(staged["fallback_model_count"]),
+                "agreement_ratio_diagnostic": round(float(staged["agreement_ratio_diagnostic"]), 4),
+                "historical_4_model_avg_score": round(float(staged["historical_4_model_avg_score"]), 4),
+                "historical_4_model_avg_pred": bool(staged["historical_4_model_avg_pred"]),
+                "prediction_changed_vs_historical": bool(staged["prediction_changed_vs_historical"]),
                 "label_source": label_row["label_source"],
                 "label_type": label_row["label_type"],
                 "notes": label_row["notes"],
@@ -531,17 +593,23 @@ def main() -> None:
         )
 
         per_paper_rows.append(row)
-        committee_predictions.append(committee_avg_pred)
+        committee_predictions.append(bool(staged["committee_avg_pred"]))
         golds.append(gold)
-        agreement_buckets[supporting_model_count] += 1
+        agreement_pattern = str(staged["agreement_pattern"])
+        agreement_buckets[agreement_pattern] = agreement_buckets.get(agreement_pattern, 0) + 1
 
     committee_metric = compute_binary_metrics(committee_predictions, golds)
     committee_metric.update(
         {
-            "method": "average_of_4_final_scores",
+            "method": "staged_cheap_first_plus_smart_borderline_review",
             "passing_score": PASSING_SCORE,
             "fallback_score": FALLBACK_SCORE,
-            "rule": "average all 4 final scores; fallback failures contribute 5; pass if average >= 6",
+            "cheap_models": STAGED_CHEAP_MODELS,
+            "smart_review_model": STAGED_SMART_MODEL,
+            "smart_review_min_score": SMART_REVIEW_MIN_SCORE,
+            "smart_review_max_score": SMART_REVIEW_MAX_SCORE,
+            "smart_review_triggered_count": sum(1 for row in per_paper_rows if row["smart_review_used"]),
+            "rule": "average the 3 cheap-model final scores first; if the preliminary average is within [5, 7], add glm-5.1 and average again; fallback failures contribute 5; pass if final average >= 6",
         }
     )
 
@@ -554,7 +622,7 @@ def main() -> None:
                 **row,
                 "candidate_type": "committee_false_positive" if row["committee_avg_pred"] else "committee_false_negative",
                 "threshold_margin": round(abs(float(row["committee_avg_score"]) - PASSING_SCORE), 4),
-                "unanimous_models": row["supporting_model_count"] in (0, len(models)),
+                "unanimous_models": row["supporting_model_count"] in (0, int(row["final_model_count"])),
             }
         )
     review_candidates.sort(
@@ -567,13 +635,16 @@ def main() -> None:
     )
 
     agreement_rows = []
-    for support_count in range(len(models) + 1):
-        fail_count = len(models) - support_count
+    for agreement_pattern in sorted(agreement_buckets.keys(), key=lambda value: tuple(int(part) for part in value.split("/"))):
+        support_count, total_count = (int(part) for part in agreement_pattern.split("/"))
+        fail_count = total_count - support_count
         agreement_rows.append(
             {
+                "agreement_pattern": agreement_pattern,
                 "supporting_model_count": support_count,
-                "paper_count": agreement_buckets[support_count],
-                "meaning": f"{support_count} 个模型单独判通过，{fail_count} 个模型单独判不通过",
+                "final_model_count": total_count,
+                "paper_count": agreement_buckets[agreement_pattern],
+                "meaning": f"{support_count} 个模型支持通过，{fail_count} 个模型支持不通过（共 {total_count} 个参与最终判定）",
             }
         )
 
@@ -623,7 +694,7 @@ def main() -> None:
             "negative_count": sum(1 for row in per_paper_rows if not row["gold"]),
             "model_summary": model_metric_rows,
             "committee_average": committee_metric,
-            "agreement_buckets": {str(key): value for key, value in agreement_buckets.items()},
+            "agreement_buckets": agreement_buckets,
             "strong_review_candidate_count": sum(
                 1 for row in review_candidates if row["candidate_type"] == "committee_false_positive"
             ),
