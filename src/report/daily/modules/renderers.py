@@ -299,20 +299,30 @@ class ScoringRenderer(BaseModuleRenderer):
 
             if scoring_method == 'mlsys_multi_model':
                 judgments = getattr(score_resp, 'model_judgments', []) or []
+                preliminary_score = getattr(score_resp, 'preliminary_score', None)
+                smart_review_used = getattr(score_resp, 'smart_review_used', False)
+                smart_review_model = getattr(score_resp, 'smart_review_model', '')
                 detail_lines.append(
-                    f"- **委员会规则**: 4 个模型最终分数直接取平均；平均分 >= {score_resp.passing_score:.1f} 即通过"
+                    f"- **委员会规则**: 先对初筛模型均分；若初筛均分落入边界区间，则加入一次 SMART_LLM 复核后再计算最终平均；平均分 >= {score_resp.passing_score:.1f} 即通过"
                 )
                 detail_lines.append(
                     "- **说明**: 下表中的单模型通过/不通过仅作诊断展示，不直接决定最终结果"
                 )
+                if preliminary_score is not None:
+                    detail_lines.append(f"- **初筛均分**: {float(preliminary_score):.2f}")
+                detail_lines.append(f"- **SMART_LLM 复核**: {'已触发' if smart_review_used else '未触发'}")
+                if smart_review_used and smart_review_model:
+                    detail_lines.append(f"- **复核模型**: {smart_review_model}")
                 detail_lines.append("")
                 if fmt == "table":
                     rows = []
                     for row in judgments:
                         fallback = "是" if row.get('fallback_due_to_error') else "否"
                         status = "通过" if row.get('pass') else "不通过"
+                        stage = "初筛" if row.get('stage') == 'cheap_committee' else "复核"
                         error = row.get('fallback_error', '') or row.get('reason', '')
                         rows.append((
+                            stage,
                             row.get('model', ''),
                             f"{float(row.get('final_score', 0)):.1f}",
                             status,
@@ -322,15 +332,16 @@ class ScoringRenderer(BaseModuleRenderer):
                     if rows:
                         detail_lines.extend(self.format_helper.format_as_table(
                             rows,
-                            ["模型", "分数", "单模型判定", "Fallback", "说明"]
+                            ["阶段", "模型", "分数", "单模型判定", "Fallback", "说明"]
                         ))
                 else:
                     for row in judgments:
                         fallback = " fallback" if row.get('fallback_due_to_error') else ""
                         status = "model-pass" if row.get('pass') else "model-fail"
+                        stage = "first-pass" if row.get('stage') == 'cheap_committee' else "smart-review"
                         error = row.get('fallback_error', '') or row.get('reason', '')
                         detail_lines.append(
-                            f"- **{row.get('model', '')}**: {float(row.get('final_score', 0)):.1f} | {status}{fallback} | {error}"
+                            f"- **{stage}:{row.get('model', '')}**: {float(row.get('final_score', 0)):.1f} | {status}{fallback} | {error}"
                         )
                     detail_lines.append("")
 
@@ -339,6 +350,9 @@ class ScoringRenderer(BaseModuleRenderer):
                 )
                 detail_lines.append(
                     f"- **Fallback 模型数**: {getattr(score_resp, 'fallback_model_count', 0)}"
+                )
+                detail_lines.append(
+                    f"- **最终模型数**: {getattr(score_resp, 'final_model_count', len(judgments))}"
                 )
                 detail_lines.append(
                     f"- **一致率（诊断）**: {getattr(score_resp, 'agreement_ratio', 0.0):.2f}"

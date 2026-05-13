@@ -1,6 +1,6 @@
 # EuroSys 2026 MLSys Evaluation
 
-This experiment scrapes the full EuroSys 2026 accepted paper list, builds a frozen ground-truth label set from `Eurosys.md`, evaluates four OpenAI-compatible chat models with the MLSys screening prompt, and writes reproducible artifacts to `data/experiments/eurosys_2026_mlsys_eval/<run_id>/`. Committee post-processing uses the same rule as the main runtime: average the 4 final scores, count fallback failures as score 5, and pass if the average is at least 6.
+This experiment scrapes the full EuroSys 2026 accepted paper list, builds a frozen ground-truth label set from `Eurosys.md`, evaluates four OpenAI-compatible chat models with the MLSys screening prompt, and writes reproducible artifacts to `data/experiments/eurosys_2026_mlsys_eval/<run_id>/`. These experiment artifacts document the historical flat 4-model evaluation setup. The main runtime has since moved to a staged scorer: cheap models run first, and `SMART_LLM` is only added for borderline papers.
 
 ## Models
 The default model list is stored in `models.json`:
@@ -19,12 +19,14 @@ export SJTU_API_BASE_URL="https://models.sjtu.edu.cn/api/v1"
 export SJTU_API_KEY="<your-key>"
 ```
 
-If the scoring strategy is `mlsys_multi_model`, the main project also supports a comma-separated `CHEAP_LLM__MODEL_NAME` in `.env`, for example:
+For the current main-project runtime, the recommended split is:
 
 ```bash
-CHEAP_LLM__MODEL_NAME=glm-5.1,minimax-m2.7,qwen3.5-27b,deepseek-v3.2
+CHEAP_LLM__MODEL_NAME=minimax-m2.7,qwen3.5-27b,deepseek-v3.2
 SMART_LLM__MODEL_NAME=glm-5.1
 ```
+
+The four-model layout used in this experiment remains useful as a historical benchmark, but it no longer describes the default staged runtime path.
 
 Optional:
 

@@ -4,7 +4,7 @@ import streamlit as st
 from webui.i18n import t
 
 
-DEFAULT_COMMITTEE_MODELS = ["glm-5.1", "minimax-m2.7", "qwen3.5-27b", "deepseek-v3.2"]
+DEFAULT_COMMITTEE_MODELS = ["minimax-m2.7", "qwen3.5-27b", "deepseek-v3.2"]
 
 
 def render(_env_values: dict, config_values: dict):
@@ -166,6 +166,36 @@ def render(_env_values: dict, config_values: dict):
             key="mlsys_export_artifacts",
         )
 
+        st.markdown(
+            f'<p class="section-title">🧠 {t("committee_smart_review_title")}</p>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(f'<p class="hint-text">{t("committee_smart_review_help")}</p>', unsafe_allow_html=True)
+        st.toggle(
+            t("committee_smart_review_enabled"),
+            value=flat.get("mlsys_smart_review_enabled", True),
+            key="mlsys_smart_review_enabled",
+        )
+        col4, col5 = st.columns(2)
+        with col4:
+            st.number_input(
+                t("committee_smart_review_min"),
+                min_value=0.0,
+                max_value=20.0,
+                value=float(flat.get("mlsys_smart_review_min_score", 5.0)),
+                step=0.5,
+                key="mlsys_smart_review_min_score",
+            )
+        with col5:
+            st.number_input(
+                t("committee_smart_review_max"),
+                min_value=0.0,
+                max_value=20.0,
+                value=float(flat.get("mlsys_smart_review_max_score", 7.0)),
+                step=0.5,
+                key="mlsys_smart_review_max_score",
+            )
+
         pass_score = st.session_state.get("mlsys_passing_score", flat.get("mlsys_passing_score", 6.0))
         fallback_score = st.session_state.get(
             "mlsys_fallback_score", flat.get("mlsys_fallback_score", 5.0)
@@ -173,9 +203,23 @@ def render(_env_values: dict, config_values: dict):
         breaker = st.session_state.get(
             "mlsys_circuit_breaker_threshold", flat.get("mlsys_circuit_breaker_threshold", 3)
         )
+        smart_review_enabled = st.session_state.get(
+            "mlsys_smart_review_enabled", flat.get("mlsys_smart_review_enabled", True)
+        )
+        smart_review_min = st.session_state.get(
+            "mlsys_smart_review_min_score", flat.get("mlsys_smart_review_min_score", 5.0)
+        )
+        smart_review_max = st.session_state.get(
+            "mlsys_smart_review_max_score", flat.get("mlsys_smart_review_max_score", 7.0)
+        )
+        review_text = (
+            f"SMART_LLM review on averages in **[{smart_review_min:.1f}, {smart_review_max:.1f}]**"
+            if smart_review_enabled
+            else "SMART_LLM review disabled"
+        )
         st.info(
-            f"Committee rule: 4 sequential model calls, final decision = average of the 4 final scores, "
-            f"pass threshold = **{pass_score:.1f}**, fallback score = **{fallback_score:.1f}**, "
+            f"Staged rule: first average the cheap first-pass models; then {review_text}; "
+            f"final pass threshold = **{pass_score:.1f}**, fallback score = **{fallback_score:.1f}**, "
             f"circuit breaker = **{breaker}**."
         )
 
@@ -196,6 +240,9 @@ def collect(_env_values: dict, _config_values: dict) -> dict:
             "mlsys_circuit_breaker_threshold", 3
         ),
         "mlsys_export_artifacts": st.session_state.get("mlsys_export_artifacts", True),
+        "mlsys_smart_review_enabled": st.session_state.get("mlsys_smart_review_enabled", True),
+        "mlsys_smart_review_min_score": st.session_state.get("mlsys_smart_review_min_score", 5.0),
+        "mlsys_smart_review_max_score": st.session_state.get("mlsys_smart_review_max_score", 7.0),
     }
 
     models_text = st.session_state.get("mlsys_committee_models_text", "")

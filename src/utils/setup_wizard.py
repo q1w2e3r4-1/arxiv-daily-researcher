@@ -444,9 +444,9 @@ def section_scoring(existing_config: dict) -> dict:
     result = {"scoring_method": scoring_method}
 
     if scoring_method == "mlsys_multi_model":
-        models_default = "\n".join(flat.get("mlsys_committee_models", ["glm-5.1", "minimax-m2.7", "qwen3.5-27b", "deepseek-v3.2"]))
+        models_default = "\n".join(flat.get("mlsys_committee_models", ["minimax-m2.7", "qwen3.5-27b", "deepseek-v3.2"]))
         models_text = questionary.text(
-            "Committee models (one per line):",
+            "First-pass committee models (one per line):",
             default=models_default,
             style=WIZARD_STYLE,
         ).ask()
@@ -488,6 +488,32 @@ def section_scoring(existing_config: dict) -> dict:
         if export_artifacts is None:
             raise KeyboardInterrupt
 
+        smart_review_enabled = questionary.confirm(
+            "Enable SMART_LLM review for borderline first-pass averages?",
+            default=flat.get("mlsys_smart_review_enabled", True),
+            style=WIZARD_STYLE,
+        ).ask()
+        if smart_review_enabled is None:
+            raise KeyboardInterrupt
+
+        smart_review_min = questionary.text(
+            "SMART_LLM review lower bound:",
+            default=str(flat.get("mlsys_smart_review_min_score", 5.0)),
+            validate=lambda x: True if _is_float(x) else "Please enter a valid number",
+            style=WIZARD_STYLE,
+        ).ask()
+        if smart_review_min is None:
+            raise KeyboardInterrupt
+
+        smart_review_max = questionary.text(
+            "SMART_LLM review upper bound:",
+            default=str(flat.get("mlsys_smart_review_max_score", 7.0)),
+            validate=lambda x: True if _is_float(x) else "Please enter a valid number",
+            style=WIZARD_STYLE,
+        ).ask()
+        if smart_review_max is None:
+            raise KeyboardInterrupt
+
         result.update(
             {
                 "mlsys_committee_models": [line.strip() for line in models_text.split("\n") if line.strip()],
@@ -495,6 +521,9 @@ def section_scoring(existing_config: dict) -> dict:
                 "mlsys_fallback_score": float(fallback_score),
                 "mlsys_circuit_breaker_threshold": int(breaker),
                 "mlsys_export_artifacts": export_artifacts,
+                "mlsys_smart_review_enabled": smart_review_enabled,
+                "mlsys_smart_review_min_score": float(smart_review_min),
+                "mlsys_smart_review_max_score": float(smart_review_max),
                 "enable_author_bonus": flat.get("enable_author_bonus", False),
                 "author_bonus_points": flat.get("author_bonus_points", 5.0),
                 "expert_authors": flat.get("expert_authors", []),
@@ -537,11 +566,14 @@ def section_scoring(existing_config: dict) -> dict:
                 "passing_score_base": float(base),
                 "passing_score_weight_coefficient": float(coeff),
                 "enable_author_bonus": enable_bonus,
-                "mlsys_committee_models": flat.get("mlsys_committee_models", ["glm-5.1", "minimax-m2.7", "qwen3.5-27b", "deepseek-v3.2"]),
+                "mlsys_committee_models": flat.get("mlsys_committee_models", ["minimax-m2.7", "qwen3.5-27b", "deepseek-v3.2"]),
                 "mlsys_passing_score": flat.get("mlsys_passing_score", 6.0),
                 "mlsys_fallback_score": flat.get("mlsys_fallback_score", 5.0),
                 "mlsys_circuit_breaker_threshold": flat.get("mlsys_circuit_breaker_threshold", 3),
                 "mlsys_export_artifacts": flat.get("mlsys_export_artifacts", True),
+                "mlsys_smart_review_enabled": flat.get("mlsys_smart_review_enabled", True),
+                "mlsys_smart_review_min_score": flat.get("mlsys_smart_review_min_score", 5.0),
+                "mlsys_smart_review_max_score": flat.get("mlsys_smart_review_max_score", 7.0),
             }
         )
 

@@ -225,7 +225,6 @@ class Settings(BaseSettings):
     # 评分策略配置
     SCORING_METHOD: str = "keyword_weighted"
     MLSYS_COMMITTEE_MODELS: List[str] = [
-        "glm-5.1",
         "minimax-m2.7",
         "qwen3.5-27b",
         "deepseek-v3.2",
@@ -234,6 +233,9 @@ class Settings(BaseSettings):
     MLSYS_FALLBACK_SCORE: float = 5.0
     MLSYS_CIRCUIT_BREAKER_THRESHOLD: int = 3
     MLSYS_EXPORT_ARTIFACTS: bool = True
+    MLSYS_SMART_REVIEW_ENABLED: bool = True
+    MLSYS_SMART_REVIEW_MIN_SCORE: float = 5.0
+    MLSYS_SMART_REVIEW_MAX_SCORE: float = 7.0
 
     # ==================== LLM配置 ====================
     # 低成本LLM：用于快速初步筛选和关键词生成
@@ -397,6 +399,16 @@ class Settings(BaseSettings):
                     )
                     self.MLSYS_EXPORT_ARTIFACTS = committee_cfg.get(
                         "export_artifacts", self.MLSYS_EXPORT_ARTIFACTS
+                    )
+                    smart_review_cfg = committee_cfg.get("smart_review", {})
+                    self.MLSYS_SMART_REVIEW_ENABLED = smart_review_cfg.get(
+                        "enabled", self.MLSYS_SMART_REVIEW_ENABLED
+                    )
+                    self.MLSYS_SMART_REVIEW_MIN_SCORE = smart_review_cfg.get(
+                        "min_preliminary_score", self.MLSYS_SMART_REVIEW_MIN_SCORE
+                    )
+                    self.MLSYS_SMART_REVIEW_MAX_SCORE = smart_review_cfg.get(
+                        "max_preliminary_score", self.MLSYS_SMART_REVIEW_MAX_SCORE
                     )
 
             # 加载路径配置

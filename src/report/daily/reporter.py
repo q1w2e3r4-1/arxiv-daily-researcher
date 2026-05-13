@@ -307,11 +307,14 @@ class Reporter:
         if settings.is_committee_scoring_enabled():
             lines.append("### 评分设置")
             lines.append("")
-            lines.append("- **评分策略**: MLSys 多模型委员会")
-            lines.append(f"- **委员会模型**: {', '.join(settings.MLSYS_COMMITTEE_MODELS)}")
+            lines.append("- **评分策略**: MLSys 分阶段委员会")
+            lines.append(f"- **初筛模型**: {', '.join(settings.MLSYS_COMMITTEE_MODELS)}")
+            lines.append(f"- **SMART_LLM 复核模型**: {settings.SMART_LLM.model_name}")
             lines.append(f"- **通过分数**: {settings.MLSYS_PASSING_SCORE:.1f}")
             lines.append(f"- **Fallback 分数**: {settings.MLSYS_FALLBACK_SCORE:.1f}")
-            lines.append("- **集成规则**: 4 个模型最终分数直接取平均；若平均分 >= 通过分数则通过；fallback 失败按 5 分计入平均")
+            lines.append(
+                f"- **集成规则**: 先对初筛模型均分；若初筛均分落入 [{settings.MLSYS_SMART_REVIEW_MIN_SCORE:.1f}, {settings.MLSYS_SMART_REVIEW_MAX_SCORE:.1f}]，则额外加入一次 SMART_LLM 复核分数，再按最终平均分判定；fallback 失败按 {settings.MLSYS_FALLBACK_SCORE:.1f} 分计入平均"
+            )
             lines.append("")
         else:
             lines.append(f"### 关键词列表（共 {len(keywords_dict)} 个，总权重 {total_weight:.1f}）")

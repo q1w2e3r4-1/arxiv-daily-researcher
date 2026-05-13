@@ -92,7 +92,6 @@
     },
     "mlsys_multi_model": {
       "committee_models": [
-        "glm-5.1",
         "minimax-m2.7",
         "qwen3.5-27b",
         "deepseek-v3.2"
@@ -100,7 +99,12 @@
       "passing_score": 6.0,
       "fallback_score": 5.0,
       "circuit_breaker_threshold": 3,
-      "export_artifacts": true
+      "export_artifacts": true,
+      "smart_review": {
+        "enabled": true,
+        "min_preliminary_score": 5.0,
+        "max_preliminary_score": 7.0
+      }
     },
     "include_all_in_report": true
   },

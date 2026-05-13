@@ -338,6 +338,9 @@ def build_config_dict(
     mlsys_fallback_score: float = 5.0,
     mlsys_circuit_breaker_threshold: int = 3,
     mlsys_export_artifacts: bool = True,
+    mlsys_smart_review_enabled: bool = True,
+    mlsys_smart_review_min_score: float = 5.0,
+    mlsys_smart_review_max_score: float = 7.0,
     keyword_tracker_enabled: bool = True,
     keyword_db_path: str = "data/keywords/keywords.db",
     keyword_normalization_enabled: bool = True,
@@ -464,11 +467,16 @@ def build_config_dict(
             },
             "mlsys_multi_model": {
                 "committee_models": mlsys_committee_models
-                or ["glm-5.1", "minimax-m2.7", "qwen3.5-27b", "deepseek-v3.2"],
+                or ["minimax-m2.7", "qwen3.5-27b", "deepseek-v3.2"],
                 "passing_score": mlsys_passing_score,
                 "fallback_score": mlsys_fallback_score,
                 "circuit_breaker_threshold": mlsys_circuit_breaker_threshold,
                 "export_artifacts": mlsys_export_artifacts,
+                "smart_review": {
+                    "enabled": mlsys_smart_review_enabled,
+                    "min_preliminary_score": mlsys_smart_review_min_score,
+                    "max_preliminary_score": mlsys_smart_review_max_score,
+                },
             },
             "include_all_in_report": include_all_in_report,
         },
@@ -651,12 +659,16 @@ def flatten_config_dict(config: Dict[str, Any]) -> Dict[str, Any]:
     flat["passing_score_weight_coefficient"] = ps.get("weight_coefficient", 3.0)
     committee = sc.get("mlsys_multi_model", {})
     flat["mlsys_committee_models"] = committee.get(
-        "committee_models", ["glm-5.1", "minimax-m2.7", "qwen3.5-27b", "deepseek-v3.2"]
+        "committee_models", ["minimax-m2.7", "qwen3.5-27b", "deepseek-v3.2"]
     )
     flat["mlsys_passing_score"] = committee.get("passing_score", 6.0)
     flat["mlsys_fallback_score"] = committee.get("fallback_score", 5.0)
     flat["mlsys_circuit_breaker_threshold"] = committee.get("circuit_breaker_threshold", 3)
     flat["mlsys_export_artifacts"] = committee.get("export_artifacts", True)
+    smart_review = committee.get("smart_review", {})
+    flat["mlsys_smart_review_enabled"] = smart_review.get("enabled", True)
+    flat["mlsys_smart_review_min_score"] = smart_review.get("min_preliminary_score", 5.0)
+    flat["mlsys_smart_review_max_score"] = smart_review.get("max_preliminary_score", 7.0)
     flat["include_all_in_report"] = sc.get("include_all_in_report", True)
 
     # Keyword tracker

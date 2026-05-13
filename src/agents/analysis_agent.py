@@ -38,6 +38,10 @@ class WeightedScoreResponse(BaseModel):
     fallback_model_count: int = 0
     agreement_ratio: float = 0.0
     aggregate_paper_type: str = ""
+    preliminary_score: Optional[float] = None
+    smart_review_used: bool = False
+    smart_review_model: str = ""
+    final_model_count: int = 0
 
 
 class Stage2Response(BaseModel):
@@ -100,6 +104,10 @@ class AnalysisAgent:
                         "run_id": self.committee_run_id,
                         "scoring_method": "mlsys_multi_model",
                         "committee_models": settings.MLSYS_COMMITTEE_MODELS,
+                        "smart_review_enabled": settings.MLSYS_SMART_REVIEW_ENABLED,
+                        "smart_review_model": settings.SMART_LLM.model_name,
+                        "smart_review_min_score": settings.MLSYS_SMART_REVIEW_MIN_SCORE,
+                        "smart_review_max_score": settings.MLSYS_SMART_REVIEW_MAX_SCORE,
                         "passing_score": settings.MLSYS_PASSING_SCORE,
                         "fallback_score": settings.MLSYS_FALLBACK_SCORE,
                         "circuit_breaker_threshold": settings.MLSYS_CIRCUIT_BREAKER_THRESHOLD,
@@ -321,13 +329,15 @@ class AnalysisAgent:
             user_prompt = user_prompt.replace(old, str(new))
         return system_prompt, user_prompt
 
-    def _call_committee_model(
+    def _call_screening_model(
         self,
+        client: OpenAI,
         model_name: str,
         system_prompt: str,
         user_prompt: str,
         paper_id: str,
         title: str,
+        stage_label: str,
     ) -> tuple[str, float, Dict[str, int], int, int, List[Dict[str, Any]]]:
         estimated_prompt_tokens = (len(system_prompt) + len(user_prompt)) // 4
         last_error: Exception | None = None
@@ -336,7 +346,7 @@ class AnalysisAgent:
         for attempt in range(settings.RETRY_MAX_ATTEMPTS):
             started = time.perf_counter()
             try:
-                resp = self.cheap_client.chat.completions.create(
+                resp = client.chat.completions.create(
                     model=model_name,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -370,7 +380,7 @@ class AnalysisAgent:
                     token_counter.add(model_name, estimated_prompt_tokens, 0)
                 if attempt == settings.RETRY_MAX_ATTEMPTS - 1:
                     logger.warning(
-                        f"委员会模型最终失败 [{model_name}] [{paper_id}] [{title[:80]}] | "
+                        f"委员会模型最终失败 [{stage_label}] [{model_name}] [{paper_id}] [{title[:80]}] | "
                         f"attempt={attempt + 1}/{settings.RETRY_MAX_ATTEMPTS} | error={error_text}"
                     )
                     raise CommitteeCallError(
@@ -391,13 +401,31 @@ class AnalysisAgent:
                 }
                 retry_events.append(retry_event)
                 logger.warning(
-                    f"委员会模型重试 [{model_name}] [{paper_id}] [{title[:80]}] | "
+                    f"委员会模型重试 [{stage_label}] [{model_name}] [{paper_id}] [{title[:80]}] | "
                     f"attempt={attempt + 1}/{settings.RETRY_MAX_ATTEMPTS} | "
                     f"request_latency={latency:.2f}s | backoff={wait_seconds:.2f}s | error={error_text}"
                 )
                 time.sleep(wait_seconds)
 
         raise RuntimeError(str(last_error) if last_error else "unknown committee llm error")
+
+    def _call_committee_model(
+        self,
+        model_name: str,
+        system_prompt: str,
+        user_prompt: str,
+        paper_id: str,
+        title: str,
+    ) -> tuple[str, float, Dict[str, int], int, int, List[Dict[str, Any]]]:
+        return self._call_screening_model(
+            client=self.cheap_client,
+            model_name=model_name,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            paper_id=paper_id,
+            title=title,
+            stage_label="cheap_committee",
+        )
 
     def _append_jsonl(self, path: Path, rows: List[Dict[str, Any]]) -> None:
         if not rows:
@@ -424,6 +452,52 @@ class AnalysisAgent:
             )
             self._append_jsonl(self.committee_artifact_dir / "paper_scores.jsonl", [summary_row])
 
+    def _make_committee_judgment(
+        self,
+        paper_id: str,
+        title: str,
+        abstract: str,
+        source: str,
+        categories: Optional[List[str]],
+        model_name: str,
+        stage: str,
+        paper_type: str,
+        base_score: float,
+        preference_bonus: int,
+        final_score: float,
+        passed: bool,
+        reason: str,
+        latency: float,
+        usage: Dict[str, int],
+        retry_count: int,
+        attempt_count: int,
+        retry_events: List[Dict[str, Any]],
+        fallback_due_to_error: bool,
+        fallback_error: str,
+    ) -> Dict[str, Any]:
+        return {
+            "paper_id": paper_id,
+            "title": title,
+            "abstract": abstract or "",
+            "source": source,
+            "categories": categories or [],
+            "model": model_name,
+            "stage": stage,
+            "paper_type": paper_type,
+            "base_score": base_score,
+            "preference_bonus": preference_bonus,
+            "final_score": final_score,
+            "pass": passed,
+            "reason": reason,
+            "latency_seconds": round(latency, 4),
+            "retry_count": retry_count,
+            "attempt_count": attempt_count,
+            "retry_events": retry_events,
+            "fallback_due_to_error": fallback_due_to_error,
+            "fallback_error": fallback_error,
+            **usage,
+        }
+
     def _make_fallback_committee_judgment(
         self,
         paper_id: str,
@@ -432,6 +506,7 @@ class AnalysisAgent:
         source: str,
         categories: Optional[List[str]],
         model_name: str,
+        stage: str,
         error: str,
         latency: float,
         usage: Dict[str, int],
@@ -440,27 +515,28 @@ class AnalysisAgent:
         retry_events: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         fallback_score = float(settings.MLSYS_FALLBACK_SCORE)
-        return {
-            "paper_id": paper_id,
-            "title": title,
-            "abstract": abstract or "",
-            "source": source,
-            "categories": categories or [],
-            "model": model_name,
-            "paper_type": "fallback_error",
-            "base_score": fallback_score,
-            "preference_bonus": 0,
-            "final_score": fallback_score,
-            "pass": False,
-            "reason": f"Fallback score after repeated API failure: {error}",
-            "latency_seconds": round(latency, 4),
-            "retry_count": retry_count,
-            "attempt_count": attempt_count,
-            "retry_events": retry_events,
-            "fallback_due_to_error": True,
-            "fallback_error": error,
-            **usage,
-        }
+        return self._make_committee_judgment(
+            paper_id=paper_id,
+            title=title,
+            abstract=abstract,
+            source=source,
+            categories=categories,
+            model_name=model_name,
+            stage=stage,
+            paper_type="fallback_error",
+            base_score=fallback_score,
+            preference_bonus=0,
+            final_score=fallback_score,
+            passed=False,
+            reason=f"Fallback score after repeated API failure: {error}",
+            latency=latency,
+            usage=usage,
+            retry_count=retry_count,
+            attempt_count=attempt_count,
+            retry_events=retry_events,
+            fallback_due_to_error=True,
+            fallback_error=error,
+        )
 
     def _summarize_committee_reasons(
         self, judgments: List[Dict[str, Any]], is_qualified: bool, total_score: float
@@ -469,14 +545,17 @@ class AnalysisAgent:
         fallback_count = len(judgments) - len(successful_rows)
         pass_votes = sum(1 for row in successful_rows if row.get("pass"))
         outcome = "qualified" if is_qualified else "not qualified"
+        cheap_count = sum(1 for row in judgments if row.get("stage") == "cheap_committee")
+        smart_used = any(row.get("stage") == "smart_review" for row in judgments)
 
         parts = [
             (
-                f"Committee result: averaged {len(judgments)} final scores with pass threshold "
+                f"Committee result: first averaged {cheap_count} cheap-model final scores; "
+                f"borderline papers may add one SMART_LLM review; pass threshold is "
                 f"{float(settings.MLSYS_PASSING_SCORE):.1f}; fallback rows contribute "
                 f"{float(settings.MLSYS_FALLBACK_SCORE):.1f}."
             ),
-            f"Aggregate score: {total_score:.2f}. Ensemble decision: {outcome}.",
+            f"Aggregate score: {total_score:.2f}. Smart review used: {'yes' if smart_used else 'no'}. Ensemble decision: {outcome}.",
             (
                 f"Diagnostic only: {pass_votes}/{len(successful_rows)} successful non-fallback "
                 f"model judgments individually passed; {fallback_count} fallback(s)."
@@ -651,8 +730,9 @@ class AnalysisAgent:
         system_prompt, user_prompt = self._build_mlsys_prompts(title, abstract, source, categories)
         raw_rows: List[Dict[str, Any]] = []
         judgments: List[Dict[str, Any]] = []
+        smart_review_model = settings.SMART_LLM.model_name
 
-        for model_name in settings.MLSYS_COMMITTEE_MODELS:
+        def score_one_model(model_name: str, stage: str, client: OpenAI) -> None:
             latency = 0.0
             usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
             raw_text = ""
@@ -673,6 +753,7 @@ class AnalysisAgent:
                     source=source,
                     categories=categories,
                     model_name=model_name,
+                    stage=stage,
                     error=error,
                     latency=latency,
                     usage=usage,
@@ -688,6 +769,7 @@ class AnalysisAgent:
                         "source": source,
                         "categories": categories or [],
                         "model": model_name,
+                        "stage": stage,
                         "raw_response": raw_text,
                         "latency_seconds": round(latency, 4),
                         "retry_count": retry_count,
@@ -698,11 +780,17 @@ class AnalysisAgent:
                     }
                 )
                 judgments.append(fallback)
-                continue
+                return
 
             try:
-                raw_text, latency, usage, retry_count, attempt_count, retry_events = self._call_committee_model(
-                    model_name, system_prompt, user_prompt, paper_id, title
+                raw_text, latency, usage, retry_count, attempt_count, retry_events = self._call_screening_model(
+                    client=client,
+                    model_name=model_name,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    paper_id=paper_id,
+                    title=title,
+                    stage_label=stage,
                 )
                 parsed = self._parse_model_json(raw_text)
                 with self.committee_failures_lock:
@@ -716,27 +804,28 @@ class AnalysisAgent:
                 passed = final_score >= float(settings.MLSYS_PASSING_SCORE)
 
                 judgments.append(
-                    {
-                        "paper_id": paper_id,
-                        "title": title,
-                        "abstract": abstract or "",
-                        "source": source,
-                        "categories": categories or [],
-                        "model": model_name,
-                        "paper_type": parsed.get("paper_type", ""),
-                        "base_score": base_score,
-                        "preference_bonus": preference_bonus,
-                        "final_score": final_score,
-                        "pass": passed,
-                        "reason": parsed.get("reason", ""),
-                        "latency_seconds": round(latency, 4),
-                        "retry_count": retry_count,
-                        "attempt_count": attempt_count,
-                        "retry_events": retry_events,
-                        "fallback_due_to_error": False,
-                        "fallback_error": "",
-                        **usage,
-                    }
+                    self._make_committee_judgment(
+                        paper_id=paper_id,
+                        title=title,
+                        abstract=abstract,
+                        source=source,
+                        categories=categories,
+                        model_name=model_name,
+                        stage=stage,
+                        paper_type=parsed.get("paper_type", ""),
+                        base_score=base_score,
+                        preference_bonus=preference_bonus,
+                        final_score=final_score,
+                        passed=passed,
+                        reason=parsed.get("reason", ""),
+                        latency=latency,
+                        usage=usage,
+                        retry_count=retry_count,
+                        attempt_count=attempt_count,
+                        retry_events=retry_events,
+                        fallback_due_to_error=False,
+                        fallback_error="",
+                    )
                 )
             except Exception as exc:
                 error = str(exc)
@@ -754,6 +843,7 @@ class AnalysisAgent:
                     source=source,
                     categories=categories,
                     model_name=model_name,
+                    stage=stage,
                     error=error,
                     latency=latency,
                     usage=usage,
@@ -762,7 +852,7 @@ class AnalysisAgent:
                     retry_events=retry_events,
                 )
                 judgments.append(fallback)
-                logger.warning(f"委员会模型评分失败 [{model_name}] [{title[:50]}]: {error}")
+                logger.warning(f"委员会模型评分失败 [{stage}] [{model_name}] [{title[:50]}]: {error}")
 
             raw_rows.append(
                 {
@@ -772,13 +862,33 @@ class AnalysisAgent:
                     "source": source,
                     "categories": categories or [],
                     "model": model_name,
+                    "stage": stage,
                     "raw_response": raw_text,
                     "latency_seconds": round(latency, 4),
                     "retry_count": retry_count,
+                    "attempt_count": attempt_count,
+                    "retry_events": retry_events,
                     "error": error,
                     **usage,
                 }
             )
+
+        for model_name in settings.MLSYS_COMMITTEE_MODELS:
+            score_one_model(model_name=model_name, stage="cheap_committee", client=self.cheap_client)
+
+        cheap_judgments = [row for row in judgments if row.get("stage") == "cheap_committee"]
+        preliminary_score = (
+            sum(float(row.get("final_score", 0)) for row in cheap_judgments) / len(cheap_judgments)
+            if cheap_judgments
+            else float(settings.MLSYS_FALLBACK_SCORE)
+        )
+
+        smart_review_used = (
+            settings.MLSYS_SMART_REVIEW_ENABLED
+            and settings.MLSYS_SMART_REVIEW_MIN_SCORE <= preliminary_score <= settings.MLSYS_SMART_REVIEW_MAX_SCORE
+        )
+        if smart_review_used:
+            score_one_model(model_name=smart_review_model, stage="smart_review", client=self.smart_client)
 
         successful_rows = [row for row in judgments if not row.get("fallback_due_to_error")]
         successful_model_count = len(successful_rows)
@@ -806,6 +916,10 @@ class AnalysisAgent:
             "source": source,
             "categories": categories or [],
             "scoring_method": "mlsys_multi_model",
+            "preliminary_score": round(preliminary_score, 4),
+            "smart_review_used": smart_review_used,
+            "smart_review_model": smart_review_model if smart_review_used else "",
+            "final_model_count": len(judgments),
             "total_score": round(total_score, 4),
             "passing_score": passing_score,
             "is_qualified": is_qualified,
@@ -820,14 +934,14 @@ class AnalysisAgent:
 
         score_breakdown = "; ".join(
             (
-                f"{row.get('model', '')}="
+                f"{row.get('stage', '')}:{row.get('model', '')}="
                 f"{float(row.get('final_score', 0)):.1f}"
                 f" ({'fallback' if row.get('fallback_due_to_error') else 'ok'})"
             )
             for row in judgments
         )
         logger.info(
-            f"委员会评分完成 [{title}]:\n明细=[{score_breakdown}] | 均分={total_score:.2f} | 及格线={passing_score:.1f} | {'✅及格' if is_qualified else '❌未及格'}"
+            f"委员会评分完成 [{title}]:\n明细=[{score_breakdown}] | 初筛均分={preliminary_score:.2f} | 最终均分={total_score:.2f} | 及格线={passing_score:.1f} | {'✅及格' if is_qualified else '❌未及格'}"
         )
 
         return WeightedScoreResponse(
@@ -846,6 +960,10 @@ class AnalysisAgent:
             fallback_model_count=fallback_model_count,
             agreement_ratio=agreement_ratio,
             aggregate_paper_type=aggregate_paper_type,
+            preliminary_score=preliminary_score,
+            smart_review_used=smart_review_used,
+            smart_review_model=smart_review_model if smart_review_used else "",
+            final_model_count=len(judgments),
         )
 
     def _get_translation_model_name(self) -> str:
