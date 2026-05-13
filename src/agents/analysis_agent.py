@@ -979,11 +979,16 @@ class AnalysisAgent:
         )
 
     def _get_translation_model_name(self) -> str:
-        # CHEAP_LLM 可能承载多个委员会模型；翻译是单模型辅助任务，优先选择 qwen3.5-27b，
-        # 因为它通常是这里最快的选项。若未配置该模型，则回退到列表中的第一个可用模型。
-        cheap_models = settings._split_model_names(settings.CHEAP_LLM.model_name)
-        committee_models = list(settings.MLSYS_COMMITTEE_MODELS or [])
-        candidates = cheap_models or committee_models or [settings.CHEAP_LLM.model_name]
+        # MLSys 委员会模式下，CHEAP_LLM.model_name 在配置加载后会被规范化为第一个模型，
+        # 因此翻译任务应优先读取完整的委员会模型列表，再从中挑选更适合单轮翻译的模型。
+        if settings.is_committee_scoring_enabled():
+            candidates = list(settings.MLSYS_COMMITTEE_MODELS or [])
+        else:
+            candidates = settings._split_model_names(settings.CHEAP_LLM.model_name)
+
+        if not candidates:
+            candidates = [settings.CHEAP_LLM.model_name]
+
         for model_name in candidates:
             if model_name == "qwen3.5-27b":
                 return model_name
