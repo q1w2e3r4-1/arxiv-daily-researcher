@@ -25,6 +25,7 @@ from tqdm import tqdm
 from config import settings
 from utils.logger import setup_logger
 from utils.token_counter import token_counter
+from utils.daily_research_store import DailyResearchStore
 from agents import KeywordAgent, AnalysisAgent
 from sources import SearchAgent, PaperMetadata, ArxivFetchError
 from report.daily import Reporter
@@ -39,13 +40,8 @@ def _score_single_paper(
     analysis_agent,
     all_keywords,
     keyword_tracker,
-    search_agent,
 ):
-    """
-    对单篇论文进行评分（供并发调用）。
-
-    线程安全：mark_as_processed 由 base_source 内部锁保护。
-    """
+    """对单篇论文进行评分（供并发调用）。"""
     logger.info(
         f"开始评分 [{source}] {paper.paper_id} | 标题: {paper.title}"
     )
@@ -80,8 +76,6 @@ def _score_single_paper(
             )
         except Exception as e:
             logger.warning(f"关键词记录失败 ({paper.paper_id[:30]}...): {e}")
-
-    search_agent.mark_as_processed(paper.paper_id, source)
 
     return scored
 
@@ -151,6 +145,44 @@ def _get_tldr_text(scored: Dict[str, Any]) -> str:
     return abstract
 
 
+def _needs_translation(scored: Dict[str, Any]) -> bool:
+    return bool(scored["score_response"].is_qualified and (scored.get("abstract") or "").strip())
+
+
+def _needs_analysis(scored: Dict[str, Any]) -> bool:
+    paper_meta = scored.get("paper_metadata")
+    return bool(
+        scored["score_response"].is_qualified
+        and settings.DAILY_ENABLE_DEEP_ANALYSIS
+        and paper_meta
+        and paper_meta.has_pdf_access()
+    )
+
+
+def _is_paper_complete(scored: Dict[str, Any]) -> bool:
+    if not scored["score_response"].is_qualified:
+        return True
+    if _needs_translation(scored) and not (scored.get("abstract_cn") or "").strip():
+        return False
+    if _needs_analysis(scored) and not scored.get("analysis"):
+        return False
+    return True
+
+
+def _finalize_paper_if_complete(
+    scored: Dict[str, Any],
+    source: str,
+    run_id: str,
+    store: DailyResearchStore,
+    search_agent: SearchAgent,
+) -> bool:
+    if not _is_paper_complete(scored):
+        return False
+    store.mark_completed(run_id, source, scored["paper_id"])
+    search_agent.mark_as_processed(scored["paper_id"], source)
+    return True
+
+
 def _submit_postscreen_tasks(
     scored,
     source,
@@ -165,8 +197,7 @@ def _submit_postscreen_tasks(
     if not scored["score_response"].is_qualified:
         return
 
-    abstract = scored.get("abstract", "")
-    if abstract and abstract.strip():
+    if _needs_translation(scored) and not (scored.get("abstract_cn") or "").strip():
         future = postscreen_executor.submit(
             _translate_single_qualified_paper,
             scored,
@@ -176,8 +207,7 @@ def _submit_postscreen_tasks(
         )
         translation_futures[future] = scored
 
-    paper_meta = scored.get("paper_metadata")
-    if settings.DAILY_ENABLE_DEEP_ANALYSIS and paper_meta and paper_meta.has_pdf_access():
+    if _needs_analysis(scored) and not scored.get("analysis"):
         future = postscreen_executor.submit(_deep_analyze_single_paper, scored, analysis_agent)
         analysis_futures[future] = {"source": source, "paper": scored}
 
@@ -193,6 +223,8 @@ class DailyResearchPipeline:
         """
         执行每日研究完整流程。
         """
+        store = None
+        run_id = ""
         try:
             print("\n" + "=" * 80)
             print("🚀 多数据源研究系统启动")
@@ -247,6 +279,16 @@ class DailyResearchPipeline:
             logger.info(f"  - 关键词总数: {len(all_keywords)} 个")
             logger.info(f"  - 总权重: {sum(all_keywords.values()):.2f}")
 
+            store = DailyResearchStore(settings.DATA_DIR / "daily_research" / "daily_research.db")
+            run_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            store.create_run(
+                run_id,
+                search_days=settings.SEARCH_DAYS,
+                max_results=settings.MAX_RESULTS,
+                enabled_sources=settings.ENABLED_SOURCES,
+                keywords=all_keywords,
+            )
+
             total_weight = sum(all_keywords.values())
             if settings.is_committee_scoring_enabled():
                 logger.info("  - 评分策略: MLSys 多模型委员会")
@@ -289,6 +331,7 @@ class DailyResearchPipeline:
                     success=False,
                     error_message=f"ArXiv 抓取失败: {error_detail}",
                 )
+                store.complete_run(run_id, status="failed", error_message=f"ArXiv 抓取失败: {error_detail}")
                 if settings.ENABLE_NOTIFICATIONS:
                     try:
                         NotifierAgent().notify(fetch_fail_result)
@@ -310,6 +353,7 @@ class DailyResearchPipeline:
                 no_papers_result = RunResult(
                     run_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"), success=True
                 )
+                store.complete_run(run_id, status="completed")
                 if settings.ENABLE_NOTIFICATIONS:
                     try:
                         NotifierAgent().notify(no_papers_result)
@@ -325,6 +369,7 @@ class DailyResearchPipeline:
             logger.info(">>> 阶段4: 对所有论文进行加权评分，并在及格后立即启动后处理...")
 
             analysis_agent = AnalysisAgent()
+
             scored_papers_by_source: Dict[str, List[Dict[str, Any]]] = {}
             analyses_by_source: Dict[str, List[Dict[str, Any]]] = {
                 source: [] for source in papers_by_source.keys()
@@ -368,21 +413,57 @@ class DailyResearchPipeline:
                         if use_scoring_concurrency:
                             logger.info(f"    使用并发模式 (workers={settings.CONCURRENCY_WORKERS})")
                             with ThreadPoolExecutor(max_workers=settings.CONCURRENCY_WORKERS) as executor:
-                                futures = {
-                                    executor.submit(
+                                futures = {}
+                                for paper in papers:
+                                    restored = store.hydrate_scored_paper(source, paper.paper_id)
+                                    if restored:
+                                        restored.setdefault("analysis", None)
+                                        scored_papers.append(restored)
+                                        if restored["score_response"].is_qualified:
+                                            qualified_count += 1
+                                        if restored.get("analysis"):
+                                            analyses_by_source[source].append(
+                                                {
+                                                    "paper_id": restored["paper_id"],
+                                                    "analysis": restored["analysis"],
+                                                }
+                                            )
+                                        if postscreen_executor is not None and not _is_paper_complete(restored):
+                                            _submit_postscreen_tasks(
+                                                restored,
+                                                source,
+                                                analysis_agent,
+                                                translation_cache,
+                                                cache_lock,
+                                                postscreen_executor,
+                                                translation_futures,
+                                                analysis_futures,
+                                            )
+                                        _finalize_paper_if_complete(
+                                            restored,
+                                            source,
+                                            run_id,
+                                            store,
+                                            search_agent,
+                                        )
+                                        pbar.update(1)
+                                        continue
+
+                                    future = executor.submit(
                                         _score_single_paper,
                                         paper,
                                         source,
                                         analysis_agent,
                                         all_keywords,
                                         keyword_tracker,
-                                        search_agent,
-                                    ): paper
-                                    for paper in papers
-                                }
+                                    )
+                                    futures[future] = paper
                                 for future in as_completed(futures):
+                                    paper = futures[future]
                                     try:
                                         result = future.result()
+                                        result.setdefault("analysis", None)
+                                        store.upsert_scored_paper(run_id, source, result)
                                         scored_papers.append(result)
                                         if result["score_response"].is_qualified:
                                             qualified_count += 1
@@ -397,8 +478,14 @@ class DailyResearchPipeline:
                                                 translation_futures,
                                                 analysis_futures,
                                             )
+                                        _finalize_paper_if_complete(
+                                            result,
+                                            source,
+                                            run_id,
+                                            store,
+                                            search_agent,
+                                        )
                                     except Exception as e:
-                                        paper = futures[future]
                                         logger.error(f"论文评分异常 ({paper.title[:30]}...): {e}")
                                     pbar.update(1)
                         else:
@@ -406,14 +493,90 @@ class DailyResearchPipeline:
                                 pbar.set_description(f"📊 [{source}] [{idx}/{len(papers)}]")
                                 pbar.set_postfix_str(f"{paper.title[:35]}...")
 
+                                restored = store.hydrate_scored_paper(source, paper.paper_id)
+                                if restored:
+                                    restored.setdefault("analysis", None)
+                                    scored_papers.append(restored)
+                                    if restored["score_response"].is_qualified:
+                                        qualified_count += 1
+                                    if restored.get("analysis"):
+                                        analyses_by_source[source].append(
+                                            {
+                                                "paper_id": restored["paper_id"],
+                                                "analysis": restored["analysis"],
+                                            }
+                                        )
+                                    if postscreen_executor is not None and not _is_paper_complete(restored):
+                                        _submit_postscreen_tasks(
+                                            restored,
+                                            source,
+                                            analysis_agent,
+                                            translation_cache,
+                                            cache_lock,
+                                            postscreen_executor,
+                                            translation_futures,
+                                            analysis_futures,
+                                        )
+                                    elif restored["score_response"].is_qualified:
+                                        if _needs_translation(restored) and not (restored.get("abstract_cn") or "").strip():
+                                            translation_result = _translate_single_qualified_paper(
+                                                restored,
+                                                analysis_agent,
+                                                translation_cache,
+                                                cache_lock,
+                                            )
+                                            restored["abstract_cn"] = translation_result.get("abstract_cn", "")
+                                            store.update_translation(
+                                                run_id,
+                                                source,
+                                                restored["paper_id"],
+                                                restored["abstract_cn"],
+                                            )
+                                        if _needs_analysis(restored) and not restored.get("analysis"):
+                                            analysis_result = _deep_analyze_single_paper(
+                                                restored, analysis_agent
+                                            )
+                                            if analysis_result:
+                                                restored["analysis"] = analysis_result["analysis"]
+                                                analyses_by_source[source].append(
+                                                    {
+                                                        "paper_id": analysis_result["paper_id"],
+                                                        "analysis": analysis_result["analysis"],
+                                                    }
+                                                )
+                                                store.update_analysis(
+                                                    run_id,
+                                                    source,
+                                                    restored["paper_id"],
+                                                    analysis_result["analysis"],
+                                                )
+                                        _finalize_paper_if_complete(
+                                            restored,
+                                            source,
+                                            run_id,
+                                            store,
+                                            search_agent,
+                                        )
+                                    else:
+                                        _finalize_paper_if_complete(
+                                            restored,
+                                            source,
+                                            run_id,
+                                            store,
+                                            search_agent,
+                                        )
+                                    pbar.update(1)
+                                    continue
+
                                 result = _score_single_paper(
                                     paper,
                                     source,
                                     analysis_agent,
                                     all_keywords,
                                     keyword_tracker,
-                                    search_agent,
                                 )
+                                result.setdefault("analysis", None)
+                                store.upsert_scored_paper(run_id, source, result)
                                 scored_papers.append(result)
                                 if result["score_response"].is_qualified:
                                     qualified_count += 1
@@ -436,21 +599,45 @@ class DailyResearchPipeline:
                                         cache_lock,
                                     )
                                     result["abstract_cn"] = translation_result.get("abstract_cn", "")
-                                    if (
-                                        settings.DAILY_ENABLE_DEEP_ANALYSIS
-                                        and result.get("paper_metadata")
-                                        and result["paper_metadata"].has_pdf_access()
-                                    ):
+                                    store.update_translation(
+                                        run_id,
+                                        source,
+                                        result["paper_id"],
+                                        result["abstract_cn"],
+                                    )
+                                    if _needs_analysis(result):
                                         analysis_result = _deep_analyze_single_paper(
                                             result, analysis_agent
                                         )
                                         if analysis_result:
+                                            result["analysis"] = analysis_result["analysis"]
                                             analyses_by_source[source].append(
                                                 {
                                                     "paper_id": analysis_result["paper_id"],
                                                     "analysis": analysis_result["analysis"],
                                                 }
                                             )
+                                            store.update_analysis(
+                                                run_id,
+                                                source,
+                                                result["paper_id"],
+                                                analysis_result["analysis"],
+                                            )
+                                    _finalize_paper_if_complete(
+                                        result,
+                                        source,
+                                        run_id,
+                                        store,
+                                        search_agent,
+                                    )
+                                else:
+                                    _finalize_paper_if_complete(
+                                        result,
+                                        source,
+                                        run_id,
+                                        store,
+                                        search_agent,
+                                    )
                                 pbar.update(1)
 
                     scored_papers_by_source[source] = scored_papers
@@ -473,14 +660,29 @@ class DailyResearchPipeline:
                         ) as pbar:
                             for future in as_completed(translation_futures):
                                 scored = translation_futures[future]
+                                source = scored.get("paper_metadata").source if scored.get("paper_metadata") else ""
                                 try:
                                     result = future.result()
                                     scored["abstract_cn"] = result.get("abstract_cn", "")
+                                    store.update_translation(
+                                        run_id,
+                                        source,
+                                        scored["paper_id"],
+                                        scored["abstract_cn"],
+                                    )
+                                    _finalize_paper_if_complete(
+                                        scored,
+                                        source,
+                                        run_id,
+                                        store,
+                                        search_agent,
+                                    )
                                     if result.get("from_cache"):
                                         logger.debug(f"使用缓存的翻译: {scored['title'][:30]}...")
                                     else:
                                         logger.debug(f"翻译并缓存: {scored['title'][:30]}...")
                                 except Exception as e:
+                                    store.update_last_error(source, scored["paper_id"], str(e))
                                     logger.error(f"摘要翻译异常 ({scored['title'][:30]}...): {e}")
                                 pbar.update(1)
 
@@ -498,11 +700,25 @@ class DailyResearchPipeline:
                                 try:
                                     result = future.result()
                                     if result:
+                                        paper_info["analysis"] = result["analysis"]
                                         analyses_by_source[source].append(
                                             {
                                                 "paper_id": result["paper_id"],
                                                 "analysis": result["analysis"],
                                             }
+                                        )
+                                        store.update_analysis(
+                                            run_id,
+                                            source,
+                                            result["paper_id"],
+                                            result["analysis"],
+                                        )
+                                        _finalize_paper_if_complete(
+                                            paper_info,
+                                            source,
+                                            run_id,
+                                            store,
+                                            search_agent,
                                         )
                                         pm = result.get("paper_meta")
                                         if pm and pm.arxiv_id:
@@ -512,8 +728,14 @@ class DailyResearchPipeline:
                                         else:
                                             pbar.write(f"  ✓ 完成: {result['title'][:55]}...")
                                     else:
+                                        store.update_last_error(
+                                            source,
+                                            paper_info["paper_id"],
+                                            "deep analysis returned no result",
+                                        )
                                         pbar.write(f"  ✗ 失败: {paper_info['title'][:55]}...")
                                 except Exception as e:
+                                    store.update_last_error(source, paper_info["paper_id"], str(e))
                                     logger.error(
                                         f"深度分析异常 ({paper_info['title'][:30]}...): {e}"
                                     )
@@ -659,6 +881,13 @@ class DailyResearchPipeline:
             if settings.TOKEN_TRACKING_ENABLED:
                 run_result.token_usage = token_counter.get_summary()
 
+            store.complete_run(
+                run_id,
+                status="completed",
+                report_paths=run_result.report_paths,
+                token_usage=run_result.token_usage,
+            )
+
             logger.info(
                 f"  - 总计: 抓取 {total_papers_count} | 及格 {run_result.total_qualified} | 深度分析 {run_result.total_analyzed}"
             )
@@ -698,9 +927,19 @@ class DailyResearchPipeline:
             return run_result
 
         except KeyboardInterrupt:
+            try:
+                if store and run_id:
+                    store.complete_run(run_id, status="interrupted", error_message="KeyboardInterrupt")
+            except Exception:
+                pass
             logger.warning("\n用户中断程序执行")
             print("\n⚠️  程序已被用户中断")
         except Exception as e:
+            try:
+                if store and run_id:
+                    store.complete_run(run_id, status="failed", error_message=str(e))
+            except Exception:
+                pass
             logger.error(f"程序执行出错: {e}", exc_info=True)
             print(f"\n❌ 程序执行失败: {e}")
             print("详细错误信息已记录到日志文件")

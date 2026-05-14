@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     """
     系统全局配置类，集中管理所有应用配置参数。
 
-    优先级：configs/config.json > .env文件 > 默认值
+    优先级：环境变量 / .env > configs/config.json > 默认值
     """
 
     # ==================== 路径配置 ====================
@@ -293,30 +293,37 @@ class Settings(BaseSettings):
             with open(config_path, "r", encoding="utf-8") as f:
                 config = json5.load(f)  # 使用json5支持注释
 
+            explicit_fields = set(self.model_fields_set)
+
+            def set_from_config(field_name: str, value: Any) -> None:
+                if field_name not in explicit_fields:
+                    setattr(self, field_name, value)
+
             # 加载搜索设置
             if "search_settings" in config:
                 settings = config["search_settings"]
-                self.SEARCH_DAYS = settings.get("search_days", self.SEARCH_DAYS)
-                self.MAX_RESULTS = settings.get("max_results", self.MAX_RESULTS)
-                self.MAX_RESULTS_PER_SOURCE = settings.get("max_results_per_source", {})
+                set_from_config("SEARCH_DAYS", settings.get("search_days", self.SEARCH_DAYS))
+                set_from_config("MAX_RESULTS", settings.get("max_results", self.MAX_RESULTS))
+                set_from_config("MAX_RESULTS_PER_SOURCE", settings.get("max_results_per_source", {}))
 
             # 加载目标领域
             if "target_domains" in config:
                 domains = config["target_domains"].get("domains", [])
                 if domains:
-                    self.TARGET_DOMAINS = domains
+                    set_from_config("TARGET_DOMAINS", domains)
 
             # 加载数据源配置
             if "data_sources" in config:
                 ds_config = config["data_sources"]
-                self.ENABLED_SOURCES = ds_config.get("enabled", ["arxiv"])
-                self.TARGET_JOURNALS = ds_config.get("journals", [])
-                self.REPORTS_BY_SOURCE = ds_config.get("reports_by_source", True)
+                set_from_config("ENABLED_SOURCES", ds_config.get("enabled", ["arxiv"]))
+                set_from_config("TARGET_JOURNALS", ds_config.get("journals", []))
+                set_from_config("REPORTS_BY_SOURCE", ds_config.get("reports_by_source", True))
                 if "arxiv" in ds_config:
                     arxiv_cfg = ds_config["arxiv"]
                     if isinstance(arxiv_cfg, dict):
-                        self.ARXIV_FETCH_TIMEOUT_SECONDS = arxiv_cfg.get(
-                            "fetch_timeout_seconds", self.ARXIV_FETCH_TIMEOUT_SECONDS
+                        set_from_config(
+                            "ARXIV_FETCH_TIMEOUT_SECONDS",
+                            arxiv_cfg.get("fetch_timeout_seconds", self.ARXIV_FETCH_TIMEOUT_SECONDS),
                         )
 
             # 加载关键词配置
@@ -326,38 +333,51 @@ class Settings(BaseSettings):
                 # 主要关键词
                 if "primary_keywords" in kw_config:
                     pk = kw_config["primary_keywords"]
-                    self.PRIMARY_KEYWORDS = pk.get("keywords", [])
-                    self.PRIMARY_KEYWORD_WEIGHT = pk.get("weight", 1.0)
+                    set_from_config("PRIMARY_KEYWORDS", pk.get("keywords", []))
+                    set_from_config("PRIMARY_KEYWORD_WEIGHT", pk.get("weight", 1.0))
 
                 # Reference 提取配置
-                self.ENABLE_REFERENCE_EXTRACTION = kw_config.get(
-                    "enable_reference_extraction", False
+                set_from_config(
+                    "ENABLE_REFERENCE_EXTRACTION",
+                    kw_config.get("enable_reference_extraction", False),
                 )
 
                 if "reference_keywords_config" in kw_config:
                     ref_cfg = kw_config["reference_keywords_config"]
-                    self.MAX_REFERENCE_KEYWORDS = ref_cfg.get("max_keywords", 12)
-                    self.SIMILARITY_THRESHOLD = ref_cfg.get("similarity_threshold", 0.75)
+                    set_from_config("MAX_REFERENCE_KEYWORDS", ref_cfg.get("max_keywords", 12))
+                    set_from_config("SIMILARITY_THRESHOLD", ref_cfg.get("similarity_threshold", 0.75))
 
                     weight_dist = ref_cfg.get("weight_distribution", {})
                     if "high_importance" in weight_dist:
-                        self.REFERENCE_WEIGHT_HIGH = weight_dist["high_importance"].get(
-                            "weight", 0.8
+                        set_from_config(
+                            "REFERENCE_WEIGHT_HIGH",
+                            weight_dist["high_importance"].get("weight", 0.8),
                         )
-                        self.REFERENCE_COUNT_HIGH = weight_dist["high_importance"].get("count", 3)
+                        set_from_config(
+                            "REFERENCE_COUNT_HIGH",
+                            weight_dist["high_importance"].get("count", 3),
+                        )
                     if "medium_importance" in weight_dist:
-                        self.REFERENCE_WEIGHT_MEDIUM = weight_dist["medium_importance"].get(
-                            "weight", 0.5
+                        set_from_config(
+                            "REFERENCE_WEIGHT_MEDIUM",
+                            weight_dist["medium_importance"].get("weight", 0.5),
                         )
-                        self.REFERENCE_COUNT_MEDIUM = weight_dist["medium_importance"].get(
-                            "count", 6
+                        set_from_config(
+                            "REFERENCE_COUNT_MEDIUM",
+                            weight_dist["medium_importance"].get("count", 6),
                         )
                     if "low_importance" in weight_dist:
-                        self.REFERENCE_WEIGHT_LOW = weight_dist["low_importance"].get("weight", 0.3)
-                        self.REFERENCE_COUNT_LOW = weight_dist["low_importance"].get("count", 3)
+                        set_from_config(
+                            "REFERENCE_WEIGHT_LOW",
+                            weight_dist["low_importance"].get("weight", 0.3),
+                        )
+                        set_from_config(
+                            "REFERENCE_COUNT_LOW",
+                            weight_dist["low_importance"].get("count", 3),
+                        )
 
                 # 研究背景
-                self.RESEARCH_CONTEXT = kw_config.get("research_context", "")
+                set_from_config("RESEARCH_CONTEXT", kw_config.get("research_context", ""))
 
             # 加载评分设置
             if "scoring_settings" in config:
@@ -365,55 +385,76 @@ class Settings(BaseSettings):
 
                 # 关键词相关度评分
                 if "keyword_relevance_score" in score_cfg:
-                    self.MAX_SCORE_PER_KEYWORD = score_cfg["keyword_relevance_score"].get(
-                        "max_score_per_keyword", 10
+                    set_from_config(
+                        "MAX_SCORE_PER_KEYWORD",
+                        score_cfg["keyword_relevance_score"].get("max_score_per_keyword", 10),
                     )
 
                 # 作者附加分
                 if "author_bonus" in score_cfg:
                     ab = score_cfg["author_bonus"]
-                    self.ENABLE_AUTHOR_BONUS = ab.get("enabled", True)
-                    self.EXPERT_AUTHORS = ab.get("expert_authors", [])
-                    self.AUTHOR_BONUS_POINTS = ab.get("bonus_points", 5.0)
+                    set_from_config("ENABLE_AUTHOR_BONUS", ab.get("enabled", True))
+                    set_from_config("EXPERT_AUTHORS", ab.get("expert_authors", []))
+                    set_from_config("AUTHOR_BONUS_POINTS", ab.get("bonus_points", 5.0))
 
                 # 动态及格分公式
                 if "passing_score_formula" in score_cfg:
                     psf = score_cfg["passing_score_formula"]
-                    self.PASSING_SCORE_BASE = psf.get("base_score", 3.0)
-                    self.PASSING_SCORE_WEIGHT_COEFFICIENT = psf.get("weight_coefficient", 2.5)
+                    set_from_config("PASSING_SCORE_BASE", psf.get("base_score", 3.0))
+                    set_from_config(
+                        "PASSING_SCORE_WEIGHT_COEFFICIENT",
+                        psf.get("weight_coefficient", 2.5),
+                    )
 
                 # 报告配置
-                self.INCLUDE_ALL_IN_REPORT = score_cfg.get("include_all_in_report", True)
+                set_from_config(
+                    "INCLUDE_ALL_IN_REPORT",
+                    score_cfg.get("include_all_in_report", True),
+                )
 
                 # 评分策略
-                self.SCORING_METHOD = score_cfg.get("strategy", self.SCORING_METHOD)
+                set_from_config("SCORING_METHOD", score_cfg.get("strategy", self.SCORING_METHOD))
 
                 if "mlsys_multi_model" in score_cfg:
                     committee_cfg = score_cfg["mlsys_multi_model"]
-                    self.MLSYS_COMMITTEE_MODELS = committee_cfg.get(
-                        "committee_models", self.MLSYS_COMMITTEE_MODELS
+                    set_from_config(
+                        "MLSYS_COMMITTEE_MODELS",
+                        committee_cfg.get("committee_models", self.MLSYS_COMMITTEE_MODELS),
                     )
-                    self.MLSYS_PASSING_SCORE = committee_cfg.get(
-                        "passing_score", self.MLSYS_PASSING_SCORE
+                    set_from_config(
+                        "MLSYS_PASSING_SCORE",
+                        committee_cfg.get("passing_score", self.MLSYS_PASSING_SCORE),
                     )
-                    self.MLSYS_FALLBACK_SCORE = committee_cfg.get(
-                        "fallback_score", self.MLSYS_FALLBACK_SCORE
+                    set_from_config(
+                        "MLSYS_FALLBACK_SCORE",
+                        committee_cfg.get("fallback_score", self.MLSYS_FALLBACK_SCORE),
                     )
-                    self.MLSYS_CIRCUIT_BREAKER_THRESHOLD = committee_cfg.get(
-                        "circuit_breaker_threshold", self.MLSYS_CIRCUIT_BREAKER_THRESHOLD
+                    set_from_config(
+                        "MLSYS_CIRCUIT_BREAKER_THRESHOLD",
+                        committee_cfg.get(
+                            "circuit_breaker_threshold", self.MLSYS_CIRCUIT_BREAKER_THRESHOLD
+                        ),
                     )
-                    self.MLSYS_EXPORT_ARTIFACTS = committee_cfg.get(
-                        "export_artifacts", self.MLSYS_EXPORT_ARTIFACTS
+                    set_from_config(
+                        "MLSYS_EXPORT_ARTIFACTS",
+                        committee_cfg.get("export_artifacts", self.MLSYS_EXPORT_ARTIFACTS),
                     )
                     smart_review_cfg = committee_cfg.get("smart_review", {})
-                    self.MLSYS_SMART_REVIEW_ENABLED = smart_review_cfg.get(
-                        "enabled", self.MLSYS_SMART_REVIEW_ENABLED
+                    set_from_config(
+                        "MLSYS_SMART_REVIEW_ENABLED",
+                        smart_review_cfg.get("enabled", self.MLSYS_SMART_REVIEW_ENABLED),
                     )
-                    self.MLSYS_SMART_REVIEW_MIN_SCORE = smart_review_cfg.get(
-                        "min_preliminary_score", self.MLSYS_SMART_REVIEW_MIN_SCORE
+                    set_from_config(
+                        "MLSYS_SMART_REVIEW_MIN_SCORE",
+                        smart_review_cfg.get(
+                            "min_preliminary_score", self.MLSYS_SMART_REVIEW_MIN_SCORE
+                        ),
                     )
-                    self.MLSYS_SMART_REVIEW_MAX_SCORE = smart_review_cfg.get(
-                        "max_preliminary_score", self.MLSYS_SMART_REVIEW_MAX_SCORE
+                    set_from_config(
+                        "MLSYS_SMART_REVIEW_MAX_SCORE",
+                        smart_review_cfg.get(
+                            "max_preliminary_score", self.MLSYS_SMART_REVIEW_MAX_SCORE
+                        ),
                     )
 
             # 加载路径配置
@@ -434,167 +475,214 @@ class Settings(BaseSettings):
             # 加载关键词追踪配置
             if "keyword_tracker" in config:
                 kt = config["keyword_tracker"]
-                self.KEYWORD_TRACKER_ENABLED = kt.get("enabled", True)
+                set_from_config("KEYWORD_TRACKER_ENABLED", kt.get("enabled", True))
 
                 if "database" in kt:
                     db_path = kt["database"].get("path", "data/keywords/keywords.db")
-                    self.KEYWORD_DB_PATH = self.PROJECT_ROOT / db_path
+                    set_from_config("KEYWORD_DB_PATH", self.PROJECT_ROOT / db_path)
 
                 if "normalization" in kt:
                     norm = kt["normalization"]
-                    self.KEYWORD_NORMALIZATION_ENABLED = norm.get("enabled", True)
-                    self.KEYWORD_NORMALIZATION_BATCH_SIZE = norm.get("batch_size", 25)
+                    set_from_config("KEYWORD_NORMALIZATION_ENABLED", norm.get("enabled", True))
+                    set_from_config("KEYWORD_NORMALIZATION_BATCH_SIZE", norm.get("batch_size", 25))
 
                 if "trend_view" in kt:
-                    self.KEYWORD_TREND_DEFAULT_DAYS = kt["trend_view"].get("default_days", 30)
+                    set_from_config(
+                        "KEYWORD_TREND_DEFAULT_DAYS",
+                        kt["trend_view"].get("default_days", 30),
+                    )
 
                 if "charts" in kt:
                     charts = kt["charts"]
                     if "bar_chart" in charts:
-                        self.KEYWORD_CHART_TOP_N = charts["bar_chart"].get("top_n", 15)
+                        set_from_config("KEYWORD_CHART_TOP_N", charts["bar_chart"].get("top_n", 15))
                     if "trend_chart" in charts:
-                        self.KEYWORD_TREND_TOP_N = charts["trend_chart"].get("top_n", 5)
+                        set_from_config("KEYWORD_TREND_TOP_N", charts["trend_chart"].get("top_n", 5))
 
                 if "report" in kt:
                     report_cfg = kt["report"]
-                    self.KEYWORD_REPORT_ENABLED = report_cfg.get("enabled", True)
-                    self.KEYWORD_REPORT_FREQUENCY = report_cfg.get("frequency", "weekly")
+                    set_from_config("KEYWORD_REPORT_ENABLED", report_cfg.get("enabled", True))
+                    set_from_config("KEYWORD_REPORT_FREQUENCY", report_cfg.get("frequency", "weekly"))
 
             # 加载通知配置
             if "notifications" in config:
                 notif = config["notifications"]
-                self.ENABLE_NOTIFICATIONS = notif.get("enabled", False)
-                self.NOTIFY_ON_SUCCESS = notif.get("on_success", True)
-                self.NOTIFY_ON_FAILURE = notif.get("on_failure", True)
-                self.NOTIFY_ATTACH_REPORTS = notif.get("attach_reports", False)
-                self.NOTIFICATION_TOP_N = notif.get("top_n", 5)
+                set_from_config("ENABLE_NOTIFICATIONS", notif.get("enabled", False))
+                set_from_config("NOTIFY_ON_SUCCESS", notif.get("on_success", True))
+                set_from_config("NOTIFY_ON_FAILURE", notif.get("on_failure", True))
+                set_from_config("NOTIFY_ATTACH_REPORTS", notif.get("attach_reports", False))
+                set_from_config("NOTIFICATION_TOP_N", notif.get("top_n", 5))
 
                 # 各渠道独立开关
                 channels = notif.get("channels", {})
-                self.NOTIFY_EMAIL_ENABLED = channels.get("email", {}).get("enabled", True)
-                self.NOTIFY_WECHAT_ENABLED = channels.get("wechat_work", {}).get("enabled", True)
-                self.NOTIFY_DINGTALK_ENABLED = channels.get("dingtalk", {}).get("enabled", True)
-                self.NOTIFY_TELEGRAM_ENABLED = channels.get("telegram", {}).get("enabled", True)
-                self.NOTIFY_SLACK_ENABLED = channels.get("slack", {}).get("enabled", True)
-                self.NOTIFY_GENERIC_WEBHOOK_ENABLED = channels.get("generic_webhook", {}).get(
-                    "enabled", True
+                set_from_config("NOTIFY_EMAIL_ENABLED", channels.get("email", {}).get("enabled", True))
+                set_from_config(
+                    "NOTIFY_WECHAT_ENABLED",
+                    channels.get("wechat_work", {}).get("enabled", True),
+                )
+                set_from_config(
+                    "NOTIFY_DINGTALK_ENABLED",
+                    channels.get("dingtalk", {}).get("enabled", True),
+                )
+                set_from_config(
+                    "NOTIFY_TELEGRAM_ENABLED",
+                    channels.get("telegram", {}).get("enabled", True),
+                )
+                set_from_config("NOTIFY_SLACK_ENABLED", channels.get("slack", {}).get("enabled", True))
+                set_from_config(
+                    "NOTIFY_GENERIC_WEBHOOK_ENABLED",
+                    channels.get("generic_webhook", {}).get("enabled", True),
                 )
 
             # 加载重试配置
             if "retry" in config:
                 retry_cfg = config["retry"]
-                self.RETRY_MAX_ATTEMPTS = retry_cfg.get("max_attempts", 3)
-                self.RETRY_MIN_WAIT = retry_cfg.get("min_wait", 2)
-                self.RETRY_MAX_WAIT = retry_cfg.get("max_wait", 30)
+                set_from_config("RETRY_MAX_ATTEMPTS", retry_cfg.get("max_attempts", 3))
+                set_from_config("RETRY_MIN_WAIT", retry_cfg.get("min_wait", 2))
+                set_from_config("RETRY_MAX_WAIT", retry_cfg.get("max_wait", 30))
 
             # 加载日志配置
             if "logging" in config:
                 log_cfg = config["logging"]
-                self.LOG_KEEP_DAYS = log_cfg.get("keep_days", 30)
-                self.LOG_ROTATION_TYPE = log_cfg.get("rotation_type", "time")
+                set_from_config("LOG_KEEP_DAYS", log_cfg.get("keep_days", 30))
+                set_from_config("LOG_ROTATION_TYPE", log_cfg.get("rotation_type", "time"))
 
             # 加载并发配置
             if "concurrency" in config:
                 conc_cfg = config["concurrency"]
-                self.ENABLE_CONCURRENCY = conc_cfg.get("enabled", False)
-                self.CONCURRENCY_WORKERS = conc_cfg.get("workers", 3)
+                set_from_config("ENABLE_CONCURRENCY", conc_cfg.get("enabled", False))
+                set_from_config("CONCURRENCY_WORKERS", conc_cfg.get("workers", 3))
 
             # 加载 LLM 请求池配置
             if "llm_request_pool" in config:
                 pool_cfg = config["llm_request_pool"]
-                self.LLM_REQUEST_POOL_ENABLED = pool_cfg.get(
-                    "enabled", self.LLM_REQUEST_POOL_ENABLED
+                set_from_config(
+                    "LLM_REQUEST_POOL_ENABLED",
+                    pool_cfg.get("enabled", self.LLM_REQUEST_POOL_ENABLED),
                 )
-                self.LLM_REQUESTS_PER_MINUTE = pool_cfg.get(
-                    "requests_per_minute", self.LLM_REQUESTS_PER_MINUTE
+                set_from_config(
+                    "LLM_REQUESTS_PER_MINUTE",
+                    pool_cfg.get("requests_per_minute", self.LLM_REQUESTS_PER_MINUTE),
                 )
-                self.LLM_REQUEST_POOL_LOG_SLOW_WAIT_SECONDS = pool_cfg.get(
-                    "log_slow_wait_seconds", self.LLM_REQUEST_POOL_LOG_SLOW_WAIT_SECONDS
+                set_from_config(
+                    "LLM_REQUEST_POOL_LOG_SLOW_WAIT_SECONDS",
+                    pool_cfg.get(
+                        "log_slow_wait_seconds", self.LLM_REQUEST_POOL_LOG_SLOW_WAIT_SECONDS
+                    ),
                 )
 
             # 加载报告设置
             if "report_settings" in config:
                 rpt_cfg = config["report_settings"]
-                self.ENABLE_HTML_REPORT = rpt_cfg.get("enable_html_report", False)
-                self.ENABLE_MARKDOWN_REPORT = rpt_cfg.get("enable_markdown_report", True)
+                set_from_config("ENABLE_HTML_REPORT", rpt_cfg.get("enable_html_report", False))
+                set_from_config(
+                    "ENABLE_MARKDOWN_REPORT",
+                    rpt_cfg.get("enable_markdown_report", True),
+                )
 
             # 加载 daily research 模式配置
             if "daily_research" in config:
                 daily_cfg = config["daily_research"]
-                self.DAILY_ENABLE_DEEP_ANALYSIS = daily_cfg.get(
-                    "enable_deep_analysis", True
+                set_from_config(
+                    "DAILY_ENABLE_DEEP_ANALYSIS",
+                    daily_cfg.get("enable_deep_analysis", True),
                 )
 
             # 加载 PDF 解析配置
             if "pdf_parser" in config:
                 pdf_cfg = config["pdf_parser"]
-                self.PDF_PARSER_MODE = pdf_cfg.get("mode", "mineru")
-                self.MINERU_MODEL_VERSION = pdf_cfg.get("mineru_model_version", "pipeline")
-                self.MINERU_POLL_INTERVAL = pdf_cfg.get("poll_interval", 3)
-                self.MINERU_POLL_TIMEOUT = pdf_cfg.get("poll_timeout", 300)
+                set_from_config("PDF_PARSER_MODE", pdf_cfg.get("mode", "mineru"))
+                set_from_config(
+                    "MINERU_MODEL_VERSION",
+                    pdf_cfg.get("mineru_model_version", "pipeline"),
+                )
+                set_from_config("MINERU_POLL_INTERVAL", pdf_cfg.get("poll_interval", 3))
+                set_from_config("MINERU_POLL_TIMEOUT", pdf_cfg.get("poll_timeout", 300))
 
             # 加载自动更新配置
             if "auto_update" in config:
                 au_cfg = config["auto_update"]
-                self.AUTO_UPDATE_ENABLED = au_cfg.get("enabled", True)
+                set_from_config("AUTO_UPDATE_ENABLED", au_cfg.get("enabled", True))
 
             # 加载运行锁配置
             if "run_lock" in config:
                 lock_cfg = config["run_lock"]
-                self.RUN_LOCK_MAX_AGE_HOURS = lock_cfg.get(
-                    "max_age_hours", self.RUN_LOCK_MAX_AGE_HOURS
+                set_from_config(
+                    "RUN_LOCK_MAX_AGE_HOURS",
+                    lock_cfg.get("max_age_hours", self.RUN_LOCK_MAX_AGE_HOURS),
                 )
 
             # 加载 token 追踪配置
             if "token_tracking" in config:
                 tt_cfg = config["token_tracking"]
-                self.TOKEN_TRACKING_ENABLED = tt_cfg.get("enabled", True)
+                set_from_config("TOKEN_TRACKING_ENABLED", tt_cfg.get("enabled", True))
 
             # 加载网络代理配置
             if "proxy" in config:
                 px_cfg = config["proxy"]
-                self.PROXY_ENABLED = px_cfg.get("enabled", False)
-                self.PROXY_URL = px_cfg.get("url", "")
-                self.PROXY_NO_PROXY = px_cfg.get("no_proxy", "localhost,127.0.0.1")
+                set_from_config("PROXY_ENABLED", px_cfg.get("enabled", False))
+                set_from_config("PROXY_URL", px_cfg.get("url", ""))
+                set_from_config("PROXY_NO_PROXY", px_cfg.get("no_proxy", "localhost,127.0.0.1"))
                 scope = px_cfg.get("scope", {})
-                self.PROXY_ARXIV = scope.get("arxiv", True)
-                self.PROXY_OPENALEX = scope.get("openalex", False)
-                self.PROXY_SEMANTIC_SCHOLAR = scope.get("semantic_scholar", False)
-                self.PROXY_LLM_API = scope.get("llm_api", False)
-                self.PROXY_NOTIFICATIONS = scope.get("notifications", False)
-                self.PROXY_UPDATE_CHECK = scope.get("update_check", False)
+                set_from_config("PROXY_ARXIV", scope.get("arxiv", True))
+                set_from_config("PROXY_OPENALEX", scope.get("openalex", False))
+                set_from_config(
+                    "PROXY_SEMANTIC_SCHOLAR",
+                    scope.get("semantic_scholar", False),
+                )
+                set_from_config("PROXY_LLM_API", scope.get("llm_api", False))
+                set_from_config("PROXY_NOTIFICATIONS", scope.get("notifications", False))
+                set_from_config("PROXY_UPDATE_CHECK", scope.get("update_check", False))
 
             # 加载 WebDAV 同步配置（仅同步设置，凭据从 .env 加载）
             if "webdav" in config:
                 wd_cfg = config["webdav"]
-                self.WEBDAV_ENABLED = wd_cfg.get("enabled", False)
-                self.WEBDAV_REMOTE_PATH = wd_cfg.get("remote_path", "/arxiv-daily-researcher/")
-                self.WEBDAV_SYNC_MODE = wd_cfg.get("sync_mode", "after_report")
-                self.WEBDAV_CRON_SCHEDULE = wd_cfg.get("cron_schedule", "0 23 * * *")
-                self.WEBDAV_SYNC_CONFIGS = wd_cfg.get("sync_configs", True)
-                self.WEBDAV_SYNC_HISTORY = wd_cfg.get("sync_history", True)
-                self.WEBDAV_SYNC_KEYWORDS = wd_cfg.get("sync_keywords", True)
-                self.WEBDAV_SYNC_REPORTS = wd_cfg.get("sync_reports", False)
+                set_from_config("WEBDAV_ENABLED", wd_cfg.get("enabled", False))
+                set_from_config(
+                    "WEBDAV_REMOTE_PATH",
+                    wd_cfg.get("remote_path", "/arxiv-daily-researcher/"),
+                )
+                set_from_config("WEBDAV_SYNC_MODE", wd_cfg.get("sync_mode", "after_report"))
+                set_from_config(
+                    "WEBDAV_CRON_SCHEDULE",
+                    wd_cfg.get("cron_schedule", "0 23 * * *"),
+                )
+                set_from_config("WEBDAV_SYNC_CONFIGS", wd_cfg.get("sync_configs", True))
+                set_from_config("WEBDAV_SYNC_HISTORY", wd_cfg.get("sync_history", True))
+                set_from_config("WEBDAV_SYNC_KEYWORDS", wd_cfg.get("sync_keywords", True))
+                set_from_config("WEBDAV_SYNC_REPORTS", wd_cfg.get("sync_reports", False))
 
             # 加载研究趋势模式配置
             if "trend_research" in config:
                 tr = config["trend_research"]
-                self.RESEARCH_DEFAULT_DATE_RANGE_DAYS = tr.get("default_date_range_days", 365)
-                self.RESEARCH_MAX_RESULTS = tr.get("max_results", 500)
-                self.RESEARCH_SORT_ORDER = tr.get("sort_order", "ascending")
-                self.RESEARCH_REPORT_POSITION = tr.get("report_position", "end")
-                self.RESEARCH_GENERATE_TLDR = tr.get("generate_tldr", True)
-                self.RESEARCH_TLDR_BATCH_SIZE = tr.get("tldr_batch_size", 10)
-                self.RESEARCH_OUTPUT_FORMATS = tr.get("output_formats", ["markdown", "html"])
-                self.RESEARCH_ENABLED_SKILLS = tr.get(
-                    "enabled_skills",
-                    [
-                        "temporal_evolution",
-                        "hot_topics",
-                        "key_authors",
-                        "research_gaps",
-                        "methodology_trends",
-                    ],
+                set_from_config(
+                    "RESEARCH_DEFAULT_DATE_RANGE_DAYS",
+                    tr.get("default_date_range_days", 365),
+                )
+                set_from_config("RESEARCH_MAX_RESULTS", tr.get("max_results", 500))
+                set_from_config("RESEARCH_SORT_ORDER", tr.get("sort_order", "ascending"))
+                set_from_config(
+                    "RESEARCH_REPORT_POSITION",
+                    tr.get("report_position", "end"),
+                )
+                set_from_config("RESEARCH_GENERATE_TLDR", tr.get("generate_tldr", True))
+                set_from_config("RESEARCH_TLDR_BATCH_SIZE", tr.get("tldr_batch_size", 10))
+                set_from_config(
+                    "RESEARCH_OUTPUT_FORMATS",
+                    tr.get("output_formats", ["markdown", "html"]),
+                )
+                set_from_config(
+                    "RESEARCH_ENABLED_SKILLS",
+                    tr.get(
+                        "enabled_skills",
+                        [
+                            "temporal_evolution",
+                            "hot_topics",
+                            "key_authors",
+                            "research_gaps",
+                            "methodology_trends",
+                        ],
+                    ),
                 )
 
             return config
