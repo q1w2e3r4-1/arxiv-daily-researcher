@@ -18,6 +18,7 @@ import hashlib
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from datetime import datetime, date
 from pathlib import Path
 from typing import Dict, List, Any
@@ -91,6 +92,28 @@ def _score_single_paper(
     return scored
 
 
+def _translate_single_qualified_paper(scored, analysis_agent, translation_cache, cache_lock):
+    """对单篇及格论文执行摘要翻译，并复用翻译缓存。"""
+    abstract = scored.get("abstract", "")
+    if not abstract or not abstract.strip():
+        return {"paper_id": scored["paper_id"], "abstract_cn": "", "from_cache": False}
+
+    abstract_hash = hashlib.md5(abstract.encode("utf-8")).hexdigest()
+    with cache_lock:
+        cached = translation_cache.get(abstract_hash)
+    if cached is not None:
+        return {"paper_id": scored["paper_id"], "abstract_cn": cached, "from_cache": True}
+
+    translation = analysis_agent.translate_abstract(abstract)
+    with cache_lock:
+        translation_cache.setdefault(abstract_hash, translation)
+    return {
+        "paper_id": scored["paper_id"],
+        "abstract_cn": translation,
+        "from_cache": False,
+    }
+
+
 def _deep_analyze_single_paper(paper_info, analysis_agent):
     """
     对单篇论文进行深度分析（供并发调用）。
@@ -116,6 +139,37 @@ def _deep_analyze_single_paper(paper_info, analysis_agent):
             "title": paper_info["title"],
         }
     return None
+
+
+def _submit_postscreen_tasks(
+    scored,
+    source,
+    analysis_agent,
+    translation_cache,
+    cache_lock,
+    postscreen_executor,
+    translation_futures,
+    analysis_futures,
+):
+    """为单篇及格论文提交翻译和深度分析任务。"""
+    if not scored["score_response"].is_qualified:
+        return
+
+    abstract = scored.get("abstract", "")
+    if abstract and abstract.strip():
+        future = postscreen_executor.submit(
+            _translate_single_qualified_paper,
+            scored,
+            analysis_agent,
+            translation_cache,
+            cache_lock,
+        )
+        translation_futures[future] = scored
+
+    paper_meta = scored.get("paper_metadata")
+    if settings.DAILY_ENABLE_DEEP_ANALYSIS and paper_meta and paper_meta.has_pdf_access():
+        future = postscreen_executor.submit(_deep_analyze_single_paper, scored, analysis_agent)
+        analysis_futures[future] = {"source": source, "paper": scored}
 
 
 class DailyResearchPipeline:
@@ -256,10 +310,13 @@ class DailyResearchPipeline:
             )
 
             # ==================== 阶段4: 对所有论文评分 ====================
-            logger.info(">>> 阶段4: 对所有论文进行加权评分...")
+            logger.info(">>> 阶段4: 对所有论文进行加权评分，并在及格后立即启动后处理...")
 
             analysis_agent = AnalysisAgent()
             scored_papers_by_source: Dict[str, List[Dict[str, Any]]] = {}
+            analyses_by_source: Dict[str, List[Dict[str, Any]]] = {
+                source: [] for source in papers_by_source.keys()
+            }
 
             keyword_tracker = None
             if settings.KEYWORD_TRACKER_ENABLED:
@@ -273,205 +330,225 @@ class DailyResearchPipeline:
 
             translation_cache = {}
             cache_lock = threading.Lock()
+            translation_futures = {}
+            analysis_futures = {}
             logger.debug("翻译缓存已启用")
 
-            for source, papers in papers_by_source.items():
-                if not papers:
-                    continue
+            postscreen_workers = settings.CONCURRENCY_WORKERS if settings.ENABLE_CONCURRENCY else 1
+            postscreen_executor_cm = (
+                ThreadPoolExecutor(max_workers=postscreen_workers)
+                if settings.ENABLE_CONCURRENCY
+                else nullcontext()
+            )
+            with postscreen_executor_cm as postscreen_executor:
+                for source, papers in papers_by_source.items():
+                    if not papers:
+                        continue
 
-                logger.info(f"  评分数据源 [{source}]: {len(papers)} 篇论文")
-                scored_papers = []
+                    logger.info(f"  评分数据源 [{source}]: {len(papers)} 篇论文")
+                    scored_papers = []
+                    qualified_count = 0
 
-                use_scoring_concurrency = settings.ENABLE_CONCURRENCY and len(papers) > 1
+                    use_scoring_concurrency = settings.ENABLE_CONCURRENCY and len(papers) > 1
+                    scoring_executor_cm = (
+                        ThreadPoolExecutor(max_workers=settings.CONCURRENCY_WORKERS)
+                        if use_scoring_concurrency
+                        else nullcontext()
+                    )
 
-                if use_scoring_concurrency:
-                    logger.info(f"    使用并发模式 (workers={settings.CONCURRENCY_WORKERS})")
                     with tqdm(
                         total=len(papers), desc=f"📊 [{source}] 评分", unit="篇", ncols=100
                     ) as pbar:
-                        with ThreadPoolExecutor(
-                            max_workers=settings.CONCURRENCY_WORKERS
-                        ) as executor:
-                            futures = {
-                                executor.submit(
-                                    _score_single_paper,
-                                    paper,
-                                    source,
-                                    analysis_agent,
-                                    all_keywords,
-                                    translation_cache,
-                                    cache_lock,
-                                    keyword_tracker,
-                                    search_agent,
-                                ): paper
-                                for paper in papers
-                            }
-                            for future in as_completed(futures):
+                        with scoring_executor_cm as executor:
+                            if use_scoring_concurrency:
+                                logger.info(f"    使用并发模式 (workers={settings.CONCURRENCY_WORKERS})")
+                                futures = {
+                                    executor.submit(
+                                        _score_single_paper,
+                                        paper,
+                                        source,
+                                        analysis_agent,
+                                        all_keywords,
+                                        translation_cache,
+                                        cache_lock,
+                                        keyword_tracker,
+                                        search_agent,
+                                    ): paper
+                                    for paper in papers
+                                }
+                                for future in as_completed(futures):
+                                    try:
+                                        result = future.result()
+                                        scored_papers.append(result)
+                                        if result["score_response"].is_qualified:
+                                            qualified_count += 1
+                                        _submit_postscreen_tasks(
+                                            result,
+                                            source,
+                                            analysis_agent,
+                                            translation_cache,
+                                            cache_lock,
+                                            postscreen_executor,
+                                            translation_futures,
+                                            analysis_futures,
+                                        )
+                                    except Exception as e:
+                                        paper = futures[future]
+                                        logger.error(f"论文评分异常 ({paper.title[:30]}...): {e}")
+                                    pbar.update(1)
+                            else:
+                                for idx, paper in enumerate(papers, 1):
+                                    pbar.set_description(f"📊 [{source}] [{idx}/{len(papers)}]")
+                                    pbar.set_postfix_str(f"{paper.title[:35]}...")
+
+                                    result = _score_single_paper(
+                                        paper,
+                                        source,
+                                        analysis_agent,
+                                        all_keywords,
+                                        translation_cache,
+                                        cache_lock,
+                                        keyword_tracker,
+                                        search_agent,
+                                    )
+                                    scored_papers.append(result)
+                                    if result["score_response"].is_qualified:
+                                        qualified_count += 1
+                                    if settings.ENABLE_CONCURRENCY:
+                                        _submit_postscreen_tasks(
+                                            result,
+                                            source,
+                                            analysis_agent,
+                                            translation_cache,
+                                            cache_lock,
+                                            postscreen_executor,
+                                            translation_futures,
+                                            analysis_futures,
+                                        )
+                                    elif result["score_response"].is_qualified:
+                                        translation_result = _translate_single_qualified_paper(
+                                            result,
+                                            analysis_agent,
+                                            translation_cache,
+                                            cache_lock,
+                                        )
+                                        result["abstract_cn"] = translation_result.get(
+                                            "abstract_cn", ""
+                                        )
+                                        if (
+                                            settings.DAILY_ENABLE_DEEP_ANALYSIS
+                                            and result.get("paper_metadata")
+                                            and result["paper_metadata"].has_pdf_access()
+                                        ):
+                                            analysis_result = _deep_analyze_single_paper(
+                                                result, analysis_agent
+                                            )
+                                            if analysis_result:
+                                                analyses_by_source[source].append(
+                                                    {
+                                                        "paper_id": analysis_result["paper_id"],
+                                                        "analysis": analysis_result["analysis"],
+                                                    }
+                                                )
+                                    pbar.update(1)
+
+                    scored_papers_by_source[source] = scored_papers
+                    logger.info(f"    [{source}] 评分完成: {qualified_count}/{len(papers)} 篇及格")
+
+                if settings.ENABLE_CONCURRENCY:
+                    logger.info(">>> 阶段5: 等待及格论文的摘要翻译与深度分析完成...")
+                    if not settings.DAILY_ENABLE_DEEP_ANALYSIS:
+                        logger.info("    深度分析已通过配置关闭，仅等待摘要翻译任务")
+
+                    translation_future_count = len(translation_futures)
+                    analysis_future_count = len(analysis_futures)
+
+                    if translation_future_count:
+                        with tqdm(
+                            total=translation_future_count,
+                            desc="🌐 摘要翻译",
+                            unit="篇",
+                            ncols=100,
+                        ) as pbar:
+                            for future in as_completed(translation_futures):
+                                scored = translation_futures[future]
                                 try:
                                     result = future.result()
-                                    scored_papers.append(result)
+                                    scored["abstract_cn"] = result.get("abstract_cn", "")
+                                    if result.get("from_cache"):
+                                        logger.debug(f"使用缓存的翻译: {scored['title'][:30]}...")
+                                    else:
+                                        logger.debug(f"翻译并缓存: {scored['title'][:30]}...")
                                 except Exception as e:
-                                    paper = futures[future]
-                                    logger.error(f"论文评分异常 ({paper.title[:30]}...): {e}")
+                                    logger.error(f"摘要翻译异常 ({scored['title'][:30]}...): {e}")
                                 pbar.update(1)
-                else:
-                    with tqdm(
-                        total=len(papers), desc=f"📊 [{source}] 评分", unit="篇", ncols=100
-                    ) as pbar:
-                        for idx, paper in enumerate(papers, 1):
-                            pbar.set_description(f"📊 [{source}] [{idx}/{len(papers)}]")
-                            pbar.set_postfix_str(f"{paper.title[:35]}...")
 
-                            result = _score_single_paper(
-                                paper,
-                                source,
-                                analysis_agent,
-                                all_keywords,
-                                translation_cache,
-                                cache_lock,
-                                keyword_tracker,
-                                search_agent,
-                            )
-                            scored_papers.append(result)
-                            pbar.update(1)
-
-                qualified_count = 0
-                for scored in scored_papers:
-                    if not scored["score_response"].is_qualified:
-                        continue
-                    qualified_count += 1
-                    abstract = scored.get("abstract", "")
-                    if not abstract or not abstract.strip():
-                        continue
-                    abstract_hash = hashlib.md5(abstract.encode("utf-8")).hexdigest()
-                    with cache_lock:
-                        cached = translation_cache.get(abstract_hash)
-                    if cached is not None:
-                        scored["abstract_cn"] = cached
-                        logger.debug(f"使用缓存的翻译: {scored['title'][:30]}...")
-                    else:
-                        scored["abstract_cn"] = analysis_agent.translate_abstract(abstract)
-                        with cache_lock:
-                            translation_cache[abstract_hash] = scored["abstract_cn"]
-                        logger.debug(f"翻译并缓存: {scored['title'][:30]}...")
-
-                scored_papers_by_source[source] = scored_papers
-                logger.info(f"    [{source}] 评分完成: {qualified_count}/{len(papers)} 篇及格")
+                    if analysis_future_count:
+                        with tqdm(
+                            total=analysis_future_count,
+                            desc="🔬 深度分析",
+                            unit="篇",
+                            ncols=100,
+                        ) as pbar:
+                            for future in as_completed(analysis_futures):
+                                future_meta = analysis_futures[future]
+                                paper_info = future_meta["paper"]
+                                source = future_meta["source"]
+                                try:
+                                    result = future.result()
+                                    if result:
+                                        analyses_by_source[source].append(
+                                            {
+                                                "paper_id": result["paper_id"],
+                                                "analysis": result["analysis"],
+                                            }
+                                        )
+                                        pm = result.get("paper_meta")
+                                        if pm and pm.arxiv_id:
+                                            pbar.write(
+                                                f"  ✓ 完成 (via arXiv {pm.arxiv_id}): {result['title'][:50]}..."
+                                            )
+                                        else:
+                                            pbar.write(f"  ✓ 完成: {result['title'][:55]}...")
+                                    else:
+                                        pbar.write(f"  ✗ 失败: {paper_info['title'][:55]}...")
+                                except Exception as e:
+                                    logger.error(
+                                        f"深度分析异常 ({paper_info['title'][:30]}...): {e}"
+                                    )
+                                    pbar.write(f"  ✗ 异常: {paper_info['title'][:55]}...")
+                                pbar.update(1)
 
             if translation_cache:
                 cache_savings = total_papers_count - len(translation_cache)
                 if cache_savings > 0:
                     logger.info(f"  翻译缓存节省了 {cache_savings} 次API调用")
 
-            # ==================== 阶段5: 深度分析及格论文 ====================
-            analyses_by_source: Dict[str, List[Dict[str, Any]]] = {}
+            for source, scored_papers in scored_papers_by_source.items():
+                qualified_papers = [p for p in scored_papers if p["score_response"].is_qualified]
+                papers_with_pdf = [
+                    p
+                    for p in qualified_papers
+                    if p.get("paper_metadata") and p["paper_metadata"].has_pdf_access()
+                ]
 
-            if not settings.DAILY_ENABLE_DEEP_ANALYSIS:
+                if not qualified_papers:
+                    logger.info(f">>> 阶段5: [{source}] 没有及格论文")
+                    continue
+
+                if not settings.DAILY_ENABLE_DEEP_ANALYSIS:
+                    logger.info(f">>> 阶段5: [{source}] 深度分析已关闭")
+                    continue
+
+                if not papers_with_pdf:
+                    logger.info(
+                        f">>> 阶段5: [{source}] {len(qualified_papers)} 篇及格论文均无PDF可用，跳过深度分析"
+                    )
+                    continue
+
                 logger.info(
-                    ">>> 阶段5: 深度分析已通过配置关闭，仅保留评分与列表输出"
+                    f">>> 阶段5: [{source}] 深度分析完成: {len(analyses_by_source.get(source, []))}/{len(papers_with_pdf)} 篇成功"
                 )
-            else:
-                for source, scored_papers in scored_papers_by_source.items():
-                    qualified_papers = [p for p in scored_papers if p["score_response"].is_qualified]
-
-                    if not qualified_papers:
-                        logger.info(f">>> 阶段5: [{source}] 没有及格论文，跳过深度分析")
-                        continue
-
-                    papers_with_pdf = []
-                    for p in qualified_papers:
-                        paper_meta = p.get("paper_metadata")
-                        if paper_meta and paper_meta.has_pdf_access():
-                            papers_with_pdf.append(p)
-
-                    if not papers_with_pdf:
-                        logger.info(
-                            f">>> 阶段5: [{source}] {len(qualified_papers)} 篇及格论文均无PDF可用，跳过深度分析"
-                        )
-                        continue
-
-                    logger.info(
-                        f">>> 阶段5: [{source}] 深度分析 {len(papers_with_pdf)}/{len(qualified_papers)} 篇有PDF的及格论文..."
-                    )
-
-                    qualified_papers_with_analysis = []
-
-                    if settings.ENABLE_CONCURRENCY and len(papers_with_pdf) > 1:
-                        logger.info(f"    使用并发模式 (workers={settings.CONCURRENCY_WORKERS})")
-                        with tqdm(
-                            total=len(papers_with_pdf),
-                            desc=f"🔬 [{source}] 深度分析",
-                            unit="篇",
-                            ncols=100,
-                        ) as pbar:
-                            with ThreadPoolExecutor(
-                                max_workers=settings.CONCURRENCY_WORKERS
-                            ) as executor:
-                                futures = {
-                                    executor.submit(
-                                        _deep_analyze_single_paper, paper_info, analysis_agent
-                                    ): paper_info
-                                    for paper_info in papers_with_pdf
-                                }
-                                for future in as_completed(futures):
-                                    paper_info = futures[future]
-                                    try:
-                                        result = future.result()
-                                        if result:
-                                            qualified_papers_with_analysis.append(
-                                                {
-                                                    "paper_id": result["paper_id"],
-                                                    "analysis": result["analysis"],
-                                                }
-                                            )
-                                            pm = result.get("paper_meta")
-                                            if pm and pm.arxiv_id:
-                                                pbar.write(
-                                                    f"  ✓ 完成 (via arXiv {pm.arxiv_id}): {result['title'][:50]}..."
-                                                )
-                                            else:
-                                                pbar.write(f"  ✓ 完成: {result['title'][:55]}...")
-                                        else:
-                                            pbar.write(f"  ✗ 失败: {paper_info['title'][:55]}...")
-                                    except Exception as e:
-                                        logger.error(
-                                            f"深度分析异常 ({paper_info['title'][:30]}...): {e}"
-                                        )
-                                        pbar.write(f"  ✗ 异常: {paper_info['title'][:55]}...")
-                                    pbar.update(1)
-                    else:
-                        with tqdm(
-                            total=len(papers_with_pdf),
-                            desc=f"🔬 [{source}] 深度分析",
-                            unit="篇",
-                            ncols=100,
-                        ) as pbar:
-                            for idx, paper_info in enumerate(papers_with_pdf, 1):
-                                pbar.set_description(f"🔬 [{source}] [{idx}/{len(papers_with_pdf)}]")
-                                pbar.set_postfix_str(f"{paper_info['title'][:35]}...")
-
-                                result = _deep_analyze_single_paper(paper_info, analysis_agent)
-
-                                if result:
-                                    qualified_papers_with_analysis.append(
-                                        {"paper_id": result["paper_id"], "analysis": result["analysis"]}
-                                    )
-                                    pm = result.get("paper_meta")
-                                    if pm and pm.arxiv_id:
-                                        pbar.write(
-                                            f"  ✓ 完成 (via arXiv {pm.arxiv_id}): {result['title'][:50]}..."
-                                        )
-                                    else:
-                                        pbar.write(f"  ✓ 完成: {result['title'][:55]}...")
-                                else:
-                                    pbar.write(f"  ✗ 失败: {paper_info['title'][:55]}...")
-
-                                pbar.update(1)
-
-                    analyses_by_source[source] = qualified_papers_with_analysis
-                    logger.info(
-                        f"    [{source}] 深度分析完成: {len(qualified_papers_with_analysis)}/{len(papers_with_pdf)} 篇成功"
-                    )
 
             # ==================== 阶段6: 生成分数据源报告 ====================
             logger.info(">>> 阶段6: 生成分数据源研究报告...")
