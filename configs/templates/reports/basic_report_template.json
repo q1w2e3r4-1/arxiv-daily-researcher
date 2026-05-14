@@ -8,7 +8,7 @@
   },
 
   // 报告模块配置 - 按order字段排序显示
-  // 顺序: 元数据(含链接) -> 评分 -> S2 TLDR -> AI TLDR -> 摘要翻译 -> 原文摘要 -> 关键词
+  // 顺序: 元数据(含链接) -> 摘要 -> 评分
   "modules": [
     {
       "id": "metadata",
@@ -31,20 +31,32 @@
       "id": "scoring",
       "name": "评分结果",
       "enabled": true,
-      "order": 2,
-      "format": "table",  // 可选: "table" | "list"
+      "order": 3,
+      "format": "list",  // 可选: "table" | "list"
       "format_options": ["table", "list"],
-      "collapsible": true,
+      "collapsible": false,
       "collapsible_default_open": false,
-      "show_details": true,
-      "show_reasoning": true,
-      "label": "评分详情"
+      "show_details": false,
+      "show_reasoning": false,
+      "show_committee_model_scores": true,
+      "label": "评分"
+    },
+    {
+      "id": "abstract_summary",
+      "name": "摘要",
+      "enabled": true,
+      "order": 2,
+      "format": "quote",  // 可选: "quote" | "admonition" | "plain"
+      "format_options": ["quote", "admonition", "plain"],
+      "collapsible": false,
+      "admonition_type": "abstract",
+      "label": "摘要"
     },
     {
       "id": "tldr_semantic_scholar",
       "name": "Semantic Scholar TLDR",
-      "enabled": true,
-      "order": 3,
+      "enabled": false,
+      "order": 4,
       "format": "admonition",  // 可选: "admonition" | "quote" | "inline"
       "format_options": ["admonition", "quote", "inline"],
       "admonition_type": "info",
@@ -54,8 +66,8 @@
     {
       "id": "tldr_ai",
       "name": "AI生成TLDR",
-      "enabled": true,
-      "order": 4,
+      "enabled": false,
+      "order": 5,
       "format": "admonition",  // 可选: "admonition" | "quote" | "inline"
       "format_options": ["admonition", "quote", "inline"],
       "admonition_type": "tip",
@@ -66,11 +78,11 @@
     {
       "id": "abstract_cn",
       "name": "摘要中文翻译",
-      "enabled": true,
-      "order": 5,
+      "enabled": false,
+      "order": 6,
       "format": "quote",  // 可选: "quote" | "admonition" | "plain"
       "format_options": ["quote", "admonition", "plain"],
-      "collapsible": true,
+      "collapsible": false,
       "collapsible_default_open": true,
       "admonition_type": "note",
       "label": "摘要翻译"
@@ -78,11 +90,11 @@
     {
       "id": "abstract_original",
       "name": "原文摘要",
-      "enabled": true,
-      "order": 6,
+      "enabled": false,
+      "order": 7,
       "format": "quote",  // 可选: "quote" | "admonition" | "plain"
       "format_options": ["quote", "admonition", "plain"],
-      "collapsible": true,
+      "collapsible": false,
       "collapsible_default_open": false,
       "admonition_type": "abstract",
       "label": "摘要 (Abstract)"
@@ -90,8 +102,8 @@
     {
       "id": "extracted_keywords",
       "name": "提取的关键词",
-      "enabled": true,
-      "order": 7,
+      "enabled": false,
+      "order": 8,
       "format": "inline",  // 可选: "inline" | "list"
       "format_options": ["inline", "list"],
       "collapsible": false,

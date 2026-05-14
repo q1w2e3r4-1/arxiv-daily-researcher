@@ -442,6 +442,22 @@ class Reporter:
         return html.escape(str(text))
 
     @staticmethod
+    def _get_visible_summary_text(paper: Dict[str, Any]) -> str:
+        score_resp = paper.get("score_response")
+        abstract_cn = (paper.get("abstract_cn") or "").strip()
+        paper_meta = paper.get("paper_metadata")
+        abstract = ""
+
+        if paper_meta and getattr(paper_meta, "abstract", None):
+            abstract = paper_meta.abstract.strip()
+        else:
+            abstract = (paper.get("abstract") or "").strip()
+
+        if score_resp and getattr(score_resp, "is_qualified", False) and abstract_cn:
+            return abstract_cn
+        return abstract
+
+    @staticmethod
     def _hm(text) -> str:
         """
         HTML 转义（保护 LaTeX 公式不被转义）。
@@ -602,113 +618,20 @@ class Reporter:
                 f'<div class="field"><span class="field-label">Published:</span> {h(published)}</div>'
             )
 
-            # TLDR / reasoning
-            summary_text = sr.tldr or sr.reasoning
+            summary_text = self._get_visible_summary_text(paper)
             if summary_text and summary_text != "评分失败，无法生成摘要":
-                summary_label = "TL;DR" if sr.tldr else "Reasoning"
-                parts.append(f'<div class="tldr"><strong>{summary_label}:</strong> {self._hm(summary_text)}</div>')
+                parts.append(f'<div class="tldr"><strong>摘要:</strong> {self._hm(summary_text)}</div>')
 
-            # 中文摘要（可折叠）
-            abstract_cn = paper.get("abstract_cn", "")
-            if abstract_cn:
-                parts.append("<details open><summary>摘要翻译</summary>")
-                parts.append(
-                    f'<div class="analysis-content"><p>{self._hm(abstract_cn)}</p></div></details>'
-                )
-
-            # 摘要原文（可折叠）
-            abstract = paper_meta.abstract if paper_meta else paper.get("abstract", "")
-            if abstract:
-                parts.append("<details><summary>Abstract</summary>")
-                parts.append(f'<div class="analysis-content"><p>{self._hm(abstract)}</p></div></details>')
-
-            # 评分详情（可折叠）
             if getattr(sr, 'scoring_method', 'keyword_weighted') == 'mlsys_multi_model':
                 judgments = getattr(sr, 'model_judgments', []) or []
                 if judgments:
-                    parts.append("<details><summary>评分详情</summary>")
-                    parts.append('<div class="analysis-content">')
-                    parts.append(
-                        '<table style="width:100%;border-collapse:collapse;font-size:0.85em;">'
+                    model_scores = " | ".join(
+                        f"{row.get('model', '')}: {float(row.get('final_score', 0)):.1f}"
+                        for row in judgments
                     )
                     parts.append(
-                        '<tr style="border-bottom:2px solid var(--color-border);">'
-                        '<th style="text-align:left;padding:4px 8px;">模型</th>'
-                        '<th style="text-align:center;padding:4px 8px;">分数</th>'
-                        '<th style="text-align:center;padding:4px 8px;">判定</th>'
-                        '<th style="text-align:center;padding:4px 8px;">Fallback</th>'
-                        '<th style="text-align:left;padding:4px 8px;">说明</th></tr>'
+                        f'<div class="field"><span class="field-label">Model Scores:</span> {h(model_scores)}</div>'
                     )
-                    for row in judgments:
-                        parts.append(
-                            f'<tr style="border-bottom:1px solid var(--color-border);">'
-                            f'<td style="padding:4px 8px;">{h(row.get("model", ""))}</td>'
-                            f'<td style="text-align:center;padding:4px 8px;">{float(row.get("final_score", 0)):.1f}</td>'
-                            f'<td style="text-align:center;padding:4px 8px;">{"通过" if row.get("pass") else "不通过"}</td>'
-                            f'<td style="text-align:center;padding:4px 8px;">{"是" if row.get("fallback_due_to_error") else "否"}</td>'
-                            f'<td style="padding:4px 8px;">{h(row.get("fallback_error") or row.get("reason", ""))}</td></tr>'
-                        )
-                    parts.append("</table>")
-                    parts.append(
-                        f'<p style="margin-top:8px;"><strong>成功模型数:</strong> {getattr(sr, "successful_model_count", 0)} | '
-                        f'<strong>Fallback 模型数:</strong> {getattr(sr, "fallback_model_count", 0)} | '
-                        f'<strong>一致率:</strong> {getattr(sr, "agreement_ratio", 0.0):.2f}</p>'
-                    )
-                    if sr.reasoning:
-                        parts.append(
-                            f'<p style="margin-top:8px;"><strong>评分理由:</strong> {h(sr.reasoning)}</p>'
-                        )
-                    parts.append("</div></details>")
-            elif sr.keyword_scores:
-                parts.append("<details><summary>评分详情</summary>")
-                parts.append('<div class="analysis-content">')
-                parts.append(
-                    '<table style="width:100%;border-collapse:collapse;font-size:0.85em;">'
-                )
-                parts.append(
-                    '<tr style="border-bottom:2px solid var(--color-border);">'
-                    '<th style="text-align:left;padding:4px 8px;">关键词</th>'
-                    '<th style="text-align:center;padding:4px 8px;">权重</th>'
-                    '<th style="text-align:center;padding:4px 8px;">相关度</th>'
-                    '<th style="text-align:center;padding:4px 8px;">得分</th></tr>'
-                )
-                for kw, score in sr.keyword_scores.items():
-                    weight = keywords_dict.get(kw, 0)
-                    weighted = score * weight
-                    parts.append(
-                        f'<tr style="border-bottom:1px solid var(--color-border);">'
-                        f'<td style="padding:4px 8px;">{h(kw)}</td>'
-                        f'<td style="text-align:center;padding:4px 8px;">{weight:.1f}</td>'
-                        f'<td style="text-align:center;padding:4px 8px;">{score:.1f}/10</td>'
-                        f'<td style="text-align:center;padding:4px 8px;">{weighted:.1f}</td></tr>'
-                    )
-                if sr.author_bonus > 0:
-                    experts = ", ".join(sr.expert_authors_found)
-                    parts.append(
-                        f'<tr style="border-bottom:1px solid var(--color-border);">'
-                        f'<td style="padding:4px 8px;">作者加分</td>'
-                        f'<td style="text-align:center;padding:4px 8px;">-</td>'
-                        f'<td style="text-align:center;padding:4px 8px;">+{sr.author_bonus:.1f}</td>'
-                        f'<td style="text-align:center;padding:4px 8px;">专家: {h(experts)}</td></tr>'
-                    )
-                parts.append("</table>")
-                if sr.reasoning:
-                    parts.append(
-                        f'<p style="margin-top:8px;"><strong>评分理由:</strong> {h(sr.reasoning)}</p>'
-                    )
-                parts.append("</div></details>")
-
-            # 提取的关键词
-            extracted_kw = (
-                sr.extracted_keywords
-                if hasattr(sr, "extracted_keywords") and sr.extracted_keywords
-                else []
-            )
-            if extracted_kw:
-                parts.append("<details><summary>关键词</summary>")
-                parts.append(
-                    f'<div class="analysis-content"><p>{h(", ".join(extracted_kw))}</p></div></details>'
-                )
 
             # 深度分析（可折叠）
             paper_id = paper_meta.paper_id if paper_meta else paper.get("paper_id")

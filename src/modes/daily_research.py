@@ -15,12 +15,9 @@
 """
 
 import hashlib
-import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import nullcontext
 from datetime import datetime, date
-from pathlib import Path
 from typing import Dict, List, Any
 
 from tqdm import tqdm
@@ -41,16 +38,13 @@ def _score_single_paper(
     source,
     analysis_agent,
     all_keywords,
-    translation_cache,
-    cache_lock,
     keyword_tracker,
     search_agent,
 ):
     """
     对单篇论文进行评分（供并发调用）。
 
-    线程安全：translation_cache 通过 cache_lock 保护，
-    mark_as_processed 由 base_source 内部锁保护。
+    线程安全：mark_as_processed 由 base_source 内部锁保护。
     """
     logger.info(
         f"开始评分 [{source}] {paper.paper_id} | 标题: {paper.title}"
@@ -139,6 +133,22 @@ def _deep_analyze_single_paper(paper_info, analysis_agent):
             "title": paper_info["title"],
         }
     return None
+
+
+def _get_tldr_text(scored: Dict[str, Any]) -> str:
+    score_resp = scored.get("score_response")
+    abstract_cn = (scored.get("abstract_cn") or "").strip()
+    paper_meta = scored.get("paper_metadata")
+    abstract = ""
+
+    if paper_meta and getattr(paper_meta, "abstract", None):
+        abstract = paper_meta.abstract.strip()
+    else:
+        abstract = (scored.get("abstract") or "").strip()
+
+    if score_resp and getattr(score_resp, "is_qualified", False) and abstract_cn:
+        return abstract_cn
+    return abstract
 
 
 def _submit_postscreen_tasks(
@@ -283,8 +293,10 @@ class DailyResearchPipeline:
                     try:
                         NotifierAgent().notify(fetch_fail_result)
                         NotifierAgent().notify_error(
-                            "arxiv_fetch",
-                            f"ArXiv 论文抓取失败\n\n错误详情：{error_detail}\n\n建议检查网络连接及 ArXiv 服务状态。",
+                            "error_network",
+                            service="ArXiv",
+                            error_detail=error_detail,
+                            suggestion="请检查网络连接、ArXiv 服务状态及相关 API 配置。",
                         )
                     except Exception as ne:
                         logger.warning(f"发送错误通知失败: {ne}")
@@ -335,12 +347,11 @@ class DailyResearchPipeline:
             logger.debug("翻译缓存已启用")
 
             postscreen_workers = settings.CONCURRENCY_WORKERS if settings.ENABLE_CONCURRENCY else 1
-            postscreen_executor_cm = (
-                ThreadPoolExecutor(max_workers=postscreen_workers)
-                if settings.ENABLE_CONCURRENCY
-                else nullcontext()
-            )
-            with postscreen_executor_cm as postscreen_executor:
+            postscreen_executor = None
+            if settings.ENABLE_CONCURRENCY:
+                postscreen_executor = ThreadPoolExecutor(max_workers=postscreen_workers)
+
+            try:
                 for source, papers in papers_by_source.items():
                     if not papers:
                         continue
@@ -350,18 +361,13 @@ class DailyResearchPipeline:
                     qualified_count = 0
 
                     use_scoring_concurrency = settings.ENABLE_CONCURRENCY and len(papers) > 1
-                    scoring_executor_cm = (
-                        ThreadPoolExecutor(max_workers=settings.CONCURRENCY_WORKERS)
-                        if use_scoring_concurrency
-                        else nullcontext()
-                    )
 
                     with tqdm(
                         total=len(papers), desc=f"📊 [{source}] 评分", unit="篇", ncols=100
                     ) as pbar:
-                        with scoring_executor_cm as executor:
-                            if use_scoring_concurrency:
-                                logger.info(f"    使用并发模式 (workers={settings.CONCURRENCY_WORKERS})")
+                        if use_scoring_concurrency:
+                            logger.info(f"    使用并发模式 (workers={settings.CONCURRENCY_WORKERS})")
+                            with ThreadPoolExecutor(max_workers=settings.CONCURRENCY_WORKERS) as executor:
                                 futures = {
                                     executor.submit(
                                         _score_single_paper,
@@ -369,8 +375,6 @@ class DailyResearchPipeline:
                                         source,
                                         analysis_agent,
                                         all_keywords,
-                                        translation_cache,
-                                        cache_lock,
                                         keyword_tracker,
                                         search_agent,
                                     ): paper
@@ -382,75 +386,72 @@ class DailyResearchPipeline:
                                         scored_papers.append(result)
                                         if result["score_response"].is_qualified:
                                             qualified_count += 1
-                                        _submit_postscreen_tasks(
-                                            result,
-                                            source,
-                                            analysis_agent,
-                                            translation_cache,
-                                            cache_lock,
-                                            postscreen_executor,
-                                            translation_futures,
-                                            analysis_futures,
-                                        )
+                                        if postscreen_executor is not None:
+                                            _submit_postscreen_tasks(
+                                                result,
+                                                source,
+                                                analysis_agent,
+                                                translation_cache,
+                                                cache_lock,
+                                                postscreen_executor,
+                                                translation_futures,
+                                                analysis_futures,
+                                            )
                                     except Exception as e:
                                         paper = futures[future]
                                         logger.error(f"论文评分异常 ({paper.title[:30]}...): {e}")
                                     pbar.update(1)
-                            else:
-                                for idx, paper in enumerate(papers, 1):
-                                    pbar.set_description(f"📊 [{source}] [{idx}/{len(papers)}]")
-                                    pbar.set_postfix_str(f"{paper.title[:35]}...")
+                        else:
+                            for idx, paper in enumerate(papers, 1):
+                                pbar.set_description(f"📊 [{source}] [{idx}/{len(papers)}]")
+                                pbar.set_postfix_str(f"{paper.title[:35]}...")
 
-                                    result = _score_single_paper(
-                                        paper,
+                                result = _score_single_paper(
+                                    paper,
+                                    source,
+                                    analysis_agent,
+                                    all_keywords,
+                                    keyword_tracker,
+                                    search_agent,
+                                )
+                                scored_papers.append(result)
+                                if result["score_response"].is_qualified:
+                                    qualified_count += 1
+                                if postscreen_executor is not None:
+                                    _submit_postscreen_tasks(
+                                        result,
                                         source,
                                         analysis_agent,
-                                        all_keywords,
                                         translation_cache,
                                         cache_lock,
-                                        keyword_tracker,
-                                        search_agent,
+                                        postscreen_executor,
+                                        translation_futures,
+                                        analysis_futures,
                                     )
-                                    scored_papers.append(result)
-                                    if result["score_response"].is_qualified:
-                                        qualified_count += 1
-                                    if settings.ENABLE_CONCURRENCY:
-                                        _submit_postscreen_tasks(
-                                            result,
-                                            source,
-                                            analysis_agent,
-                                            translation_cache,
-                                            cache_lock,
-                                            postscreen_executor,
-                                            translation_futures,
-                                            analysis_futures,
+                                elif result["score_response"].is_qualified:
+                                    translation_result = _translate_single_qualified_paper(
+                                        result,
+                                        analysis_agent,
+                                        translation_cache,
+                                        cache_lock,
+                                    )
+                                    result["abstract_cn"] = translation_result.get("abstract_cn", "")
+                                    if (
+                                        settings.DAILY_ENABLE_DEEP_ANALYSIS
+                                        and result.get("paper_metadata")
+                                        and result["paper_metadata"].has_pdf_access()
+                                    ):
+                                        analysis_result = _deep_analyze_single_paper(
+                                            result, analysis_agent
                                         )
-                                    elif result["score_response"].is_qualified:
-                                        translation_result = _translate_single_qualified_paper(
-                                            result,
-                                            analysis_agent,
-                                            translation_cache,
-                                            cache_lock,
-                                        )
-                                        result["abstract_cn"] = translation_result.get(
-                                            "abstract_cn", ""
-                                        )
-                                        if (
-                                            settings.DAILY_ENABLE_DEEP_ANALYSIS
-                                            and result.get("paper_metadata")
-                                            and result["paper_metadata"].has_pdf_access()
-                                        ):
-                                            analysis_result = _deep_analyze_single_paper(
-                                                result, analysis_agent
+                                        if analysis_result:
+                                            analyses_by_source[source].append(
+                                                {
+                                                    "paper_id": analysis_result["paper_id"],
+                                                    "analysis": analysis_result["analysis"],
+                                                }
                                             )
-                                            if analysis_result:
-                                                analyses_by_source[source].append(
-                                                    {
-                                                        "paper_id": analysis_result["paper_id"],
-                                                        "analysis": analysis_result["analysis"],
-                                                    }
-                                                )
-                                    pbar.update(1)
+                                pbar.update(1)
 
                     scored_papers_by_source[source] = scored_papers
                     logger.info(f"    [{source}] 评分完成: {qualified_count}/{len(papers)} 篇及格")
@@ -518,6 +519,9 @@ class DailyResearchPipeline:
                                     )
                                     pbar.write(f"  ✗ 异常: {paper_info['title'][:55]}...")
                                 pbar.update(1)
+            finally:
+                if postscreen_executor is not None:
+                    postscreen_executor.shutdown(wait=True)
 
             if translation_cache:
                 cache_savings = total_papers_count - len(translation_cache)
@@ -625,7 +629,7 @@ class DailyResearchPipeline:
                             "title": p["title"],
                             "score": score_response.total_score,
                             "source": source,
-                            "tldr": score_response.tldr,
+                            "tldr": _get_tldr_text(p),
                             "reasoning": score_response.reasoning,
                             "url": p["url"],
                         }

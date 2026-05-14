@@ -53,7 +53,7 @@
       "format": "admonition",  // 可选: "admonition" | "quote" | "plain"
       "format_options": ["admonition", "quote", "plain"],
       "admonition_type": "info",
-      "collapsible": true,
+      "collapsible": false,
       "collapsible_default_open": false,
       "label": "方法",
       "prompt": "请描述论文使用的主要研究方法和技术路线。",
@@ -90,7 +90,7 @@
       "format_options": ["list", "admonition"],
       "list_style": "bullet",
       "admonition_type": "success",
-      "collapsible": true,
+      "collapsible": false,
       "collapsible_default_open": false,
       "label": "优点",
       "prompt": "请分析论文的主要优点和亮点。",
@@ -104,7 +104,7 @@
       "format_options": ["list", "admonition"],
       "list_style": "bullet",
       "admonition_type": "warning",
-      "collapsible": true,
+      "collapsible": false,
       "collapsible_default_open": false,
       "label": "局限",
       "prompt": "请分析论文的局限性和不足之处。",
@@ -128,7 +128,7 @@
       "format": "list",  // 可选: "list" | "quote"
       "format_options": ["list", "quote"],
       "list_style": "bullet",
-      "collapsible": true,
+      "collapsible": false,
       "collapsible_default_open": false,
       "label": "未来工作",
       "prompt": "请总结论文提出的未来研究方向。",
@@ -140,7 +140,7 @@
       "order": 11,
       "format": "qa",  // 可选: "qa" | "list"
       "format_options": ["qa", "list"],
-      "collapsible": true,
+      "collapsible": false,
       "collapsible_default_open": false,
       "label": "自定义问题",
       "questions": [],
@@ -159,6 +159,7 @@
   // 布局配置
   "layout": {
     "section_title": "深度分析",
-    "show_as_collapsible": false,
+    "show_as_collapsible": true,
+    "collapsible_default_open": false,
   }
 }

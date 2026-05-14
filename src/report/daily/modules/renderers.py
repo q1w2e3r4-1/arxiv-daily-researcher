@@ -9,6 +9,22 @@ from .base_module import BaseModuleRenderer, FormatHelper
 from .trend_renderer import TrendRenderer
 
 
+def _get_visible_abstract_summary(data: Dict[str, Any]) -> str:
+    score_resp = data.get('score_response')
+    abstract_cn = (data.get('abstract_cn') or '').strip()
+    paper_meta = data.get('paper_metadata')
+    abstract = ''
+
+    if paper_meta and getattr(paper_meta, 'abstract', None):
+        abstract = paper_meta.abstract.strip()
+    else:
+        abstract = (data.get('abstract') or '').strip()
+
+    if score_resp and getattr(score_resp, 'is_qualified', False) and abstract_cn:
+        return abstract_cn
+    return abstract
+
+
 class MetadataRenderer(BaseModuleRenderer):
     """论文元数据渲染器"""
 
@@ -198,6 +214,30 @@ class AbstractCnRenderer(BaseModuleRenderer):
         return lines
 
 
+class AbstractSummaryRenderer(BaseModuleRenderer):
+    """摘要摘要渲染器"""
+
+    def render(self, data: Dict[str, Any], config: Dict[str, Any]) -> List[str]:
+        if not self.is_enabled(config):
+            return []
+
+        summary = _get_visible_abstract_summary(data)
+        if not summary:
+            return []
+
+        label = self.get_label(config)
+        lines = []
+
+        if label and self.get_format(config) not in ["admonition"] and not self.should_collapsible(config):
+            lines.append(f"**{label}**:")
+            lines.append("")
+
+        content_lines = self.apply_format(summary, config)
+        lines.extend(content_lines)
+
+        return lines
+
+
 class TldrSemanticScholarRenderer(BaseModuleRenderer):
     """Semantic Scholar TLDR渲染器"""
 
@@ -285,6 +325,7 @@ class ScoringRenderer(BaseModuleRenderer):
         fmt = self.get_format(config)
         show_details = config.get('show_details', True)
         show_reasoning = config.get('show_reasoning', True)
+        show_committee_model_scores = config.get('show_committee_model_scores', False)
 
         lines = []
         status_icon = "✅" if score_resp.is_qualified else "❌"
@@ -293,9 +334,19 @@ class ScoringRenderer(BaseModuleRenderer):
         lines.append(f"**评分**: {score_resp.total_score:.1f} / {score_resp.passing_score:.1f} {status_icon}")
         lines.append("")
 
+        scoring_method = getattr(score_resp, 'scoring_method', 'keyword_weighted')
+        if show_committee_model_scores and scoring_method == 'mlsys_multi_model':
+            judgments = getattr(score_resp, 'model_judgments', []) or []
+            if judgments:
+                model_scores = [
+                    f"{row.get('model', '')}: {float(row.get('final_score', 0)):.1f}"
+                    for row in judgments
+                ]
+                lines.append(f"**模型评分**: {' | '.join(model_scores)}")
+                lines.append("")
+
         if show_details:
             detail_lines = []
-            scoring_method = getattr(score_resp, 'scoring_method', 'keyword_weighted')
 
             if scoring_method == 'mlsys_multi_model':
                 judgments = getattr(score_resp, 'model_judgments', []) or []
@@ -472,9 +523,9 @@ class DeepAnalysisRenderer(BaseModuleRenderer):
             return []
 
         lines = []
-        section_title = self.deep_template.get('layout', {}).get('section_title', '深度分析')
-        lines.append(f"**{section_title}**:")
-        lines.append("")
+        layout = self.deep_template.get('layout', {})
+        section_title = layout.get('section_title', '深度分析')
+        show_as_collapsible = layout.get('show_as_collapsible', False)
 
         # 获取模块配置并按order排序
         modules = self.deep_template.get('modules', [])
@@ -483,10 +534,22 @@ class DeepAnalysisRenderer(BaseModuleRenderer):
             key=lambda x: x.get('order', 999)
         )
 
+        body_lines = []
         for module in enabled_modules:
             module_id = module.get('id')
             module_lines = self._render_module(module_id, analysis, module)
-            lines.extend(module_lines)
+            body_lines.extend(module_lines)
+
+        if not any(line.strip() for line in body_lines):
+            return []
+
+        if show_as_collapsible:
+            default_open = layout.get('collapsible_default_open', False)
+            lines.extend(self.format_helper.wrap_collapsible(body_lines, section_title, default_open))
+        else:
+            lines.append(f"**{section_title}**:")
+            lines.append("")
+            lines.extend(body_lines)
 
         return lines
 
@@ -605,6 +668,7 @@ class ModuleRendererFactory:
         # 注册基本报告渲染器
         self._renderers = {
             "metadata": MetadataRenderer(format_helper),
+            "abstract_summary": AbstractSummaryRenderer(format_helper),
             "abstract_original": AbstractOriginalRenderer(format_helper),
             "abstract_cn": AbstractCnRenderer(format_helper),
             "tldr_semantic_scholar": TldrSemanticScholarRenderer(format_helper),
