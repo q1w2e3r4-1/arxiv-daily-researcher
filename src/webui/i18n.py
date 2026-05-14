@@ -161,6 +161,22 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "zh": "进程已启动，日志将实时生成。",
         "en": "Process started. Logs will appear shortly.",
     },
+    "rm_run_override_hint": {
+        "zh": "以下参数仅影响本次运行；如果要修改默认值，请到“搜索与数据源”页保存配置。",
+        "en": "The settings below affect this run only. Save defaults in the Search & Sources tab if needed.",
+    },
+    "rm_daily_max_results_label": {
+        "zh": "本次运行最大论文数",
+        "en": "Max papers for this run",
+    },
+    "rm_daily_max_results_help": {
+        "zh": "仅限制这次网页触发运行的最大论文数。",
+        "en": "Limits only this web-triggered run.",
+    },
+    "rm_err_no_categories": {
+        "zh": "请至少选择一个 ArXiv 分类。",
+        "en": "Please select at least one ArXiv category.",
+    },
     # run_manager 状态标签
     "rm_status_title": {"zh": "当前运行状态", "en": "Current Run Status"},
     "rm_no_running_tasks": {

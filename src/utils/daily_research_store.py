@@ -44,6 +44,8 @@ class DailyResearchStore:
                     completed_at TEXT,
                     status TEXT NOT NULL,
                     search_days INTEGER,
+                    date_from TEXT,
+                    date_to TEXT,
                     max_results INTEGER,
                     enabled_sources_json TEXT,
                     keywords_json TEXT,
@@ -99,6 +101,15 @@ class DailyResearchStore:
                 ON daily_papers(analysis_completed_at);
                 """
             )
+
+            run_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(daily_runs)").fetchall()
+            }
+            if "date_from" not in run_columns:
+                conn.execute("ALTER TABLE daily_runs ADD COLUMN date_from TEXT")
+            if "date_to" not in run_columns:
+                conn.execute("ALTER TABLE daily_runs ADD COLUMN date_to TEXT")
+
             conn.commit()
 
     @staticmethod
@@ -126,17 +137,21 @@ class DailyResearchStore:
         max_results: int,
         enabled_sources: Any,
         keywords: Dict[str, float],
+        date_from: Optional[Any] = None,
+        date_to: Optional[Any] = None,
     ) -> None:
         now = self._utcnow_iso()
         with self._get_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO daily_runs (
-                    run_id, started_at, status, search_days, max_results,
+                    run_id, started_at, status, search_days, date_from, date_to, max_results,
                     enabled_sources_json, keywords_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(run_id) DO UPDATE SET
                     search_days = excluded.search_days,
+                    date_from = excluded.date_from,
+                    date_to = excluded.date_to,
                     max_results = excluded.max_results,
                     enabled_sources_json = excluded.enabled_sources_json,
                     keywords_json = excluded.keywords_json,
@@ -147,6 +162,8 @@ class DailyResearchStore:
                     now,
                     "running",
                     search_days,
+                    str(date_from) if date_from else None,
+                    str(date_to) if date_to else None,
                     max_results,
                     self._json_dumps(list(enabled_sources)),
                     self._json_dumps(keywords),

@@ -78,7 +78,12 @@ class ArxivSource(BasePaperSource):
     - 支持网络代理
     """
 
-    def __init__(self, history_dir: Path, max_results: int = 100, proxy_dict: dict = None):
+    def __init__(
+        self,
+        history_dir: Path,
+        max_results: int = 100,
+        proxy_dict: Optional[dict] = None,
+    ):
         """
         初始化 ArXiv 数据源。
 
@@ -110,6 +115,7 @@ class ArxivSource(BasePaperSource):
         参数:
             days: 搜索最近 N 天的论文
             domains: ArXiv 领域分类列表，如 ["quant-ph", "cs.AI"]
+            kwargs.date_from/date_to: 可选显式日期范围（闭区间）
 
         返回:
             List[PaperMetadata]: 论文元数据列表
@@ -118,6 +124,8 @@ class ArxivSource(BasePaperSource):
             domains = ["quant-ph"]
 
         all_papers = {}
+        date_from = kwargs.get("date_from")
+        date_to = kwargs.get("date_to")
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
         try:
@@ -134,7 +142,10 @@ class ArxivSource(BasePaperSource):
 
         logger.info("[ArXiv] 开始抓取论文")
         logger.info(f"  目标领域: {domains}")
-        logger.info(f"  时间范围: 最近 {days} 天")
+        if date_from and date_to:
+            logger.info(f"  时间范围: {date_from} ~ {date_to}")
+        else:
+            logger.info(f"  时间范围: 最近 {days} 天")
 
         # 记录因严重错误失败的领域及其最后错误信息
         failed_domains: list = []
@@ -193,7 +204,15 @@ class ArxivSource(BasePaperSource):
                                 continue
 
                             # 时间过滤
-                            if result.published < cutoff_date:
+                            published_dt = result.published
+                            published_day = published_dt.date()
+                            if date_from and date_to:
+                                if published_day > date_to:
+                                    continue
+                                if published_day < date_from:
+                                    skipped_old += 1
+                                    break
+                            elif published_dt < cutoff_date:
                                 skipped_old += 1
                                 continue
 

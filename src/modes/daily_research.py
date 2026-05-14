@@ -219,6 +219,10 @@ class DailyResearchPipeline:
     从多个数据源抓取论文，评分筛选，深度分析，生成报告，发送通知。
     """
 
+    def __init__(self, date_from: date | None = None, date_to: date | None = None):
+        self.date_from = date_from
+        self.date_to = date_to
+
     def run(self):
         """
         执行每日研究完整流程。
@@ -245,7 +249,10 @@ class DailyResearchPipeline:
                 logger.info(f"ArXiv目标领域: {settings.TARGET_DOMAINS}")
             if settings.TARGET_JOURNALS:
                 logger.info(f"目标期刊: {settings.TARGET_JOURNALS}")
-            logger.info(f"搜索天数: {settings.SEARCH_DAYS}")
+            if self.date_from and self.date_to:
+                logger.info(f"搜索日期范围: {self.date_from} ~ {self.date_to}")
+            else:
+                logger.info(f"搜索天数: {settings.SEARCH_DAYS}")
             logger.info(f"最大结果数: {settings.MAX_RESULTS}")
             logger.info(f"启用Reference提取: {settings.ENABLE_REFERENCE_EXTRACTION}")
 
@@ -287,6 +294,8 @@ class DailyResearchPipeline:
                 max_results=settings.MAX_RESULTS,
                 enabled_sources=settings.ENABLED_SOURCES,
                 keywords=all_keywords,
+                date_from=self.date_from,
+                date_to=self.date_to,
             )
 
             total_weight = sum(all_keywords.values())
@@ -320,7 +329,9 @@ class DailyResearchPipeline:
 
             try:
                 papers_by_source: Dict[str, List[PaperMetadata]] = search_agent.fetch_all_papers(
-                    days=settings.SEARCH_DAYS
+                    days=settings.SEARCH_DAYS,
+                    date_from=self.date_from,
+                    date_to=self.date_to,
                 )
             except ArxivFetchError as afe:
                 # ArXiv 抓取彻底失败（多次重试后仍无法获取任何论文）

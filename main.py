@@ -7,6 +7,7 @@
 """
 
 import sys
+import json
 import argparse
 from pathlib import Path
 from datetime import date, timedelta
@@ -19,6 +20,59 @@ from utils.logger import setup_logger, setup_run_log
 from utils.run_lock import run_lock
 
 logger = setup_logger("Main")
+
+
+def _load_manual_run_request(request_file: str | None):
+    if not request_file:
+        return None
+
+    path = Path(request_file)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    finally:
+        path.unlink(missing_ok=True)
+
+    date_from_raw = data.get("date_from")
+    date_to_raw = data.get("date_to")
+    categories = [str(cat).strip() for cat in data.get("arxiv_categories", []) if str(cat).strip()]
+    max_results = int(data.get("max_results")) if data.get("max_results") is not None else None
+
+    if not date_from_raw or not date_to_raw:
+        raise ValueError("daily request file 缺少 date_from/date_to")
+    if not categories:
+        raise ValueError("daily request file 至少需要一个 arXiv 分类")
+    if max_results is None or max_results < 1:
+        raise ValueError("daily request file 的 max_results 必须 >= 1")
+
+    date_from = date.fromisoformat(str(date_from_raw))
+    date_to = date.fromisoformat(str(date_to_raw))
+    if date_from > date_to:
+        raise ValueError("daily request file 的 date_from 不能晚于 date_to")
+
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "max_results": max_results,
+        "arxiv_categories": categories,
+    }
+
+
+def _apply_manual_run_overrides(daily_request: dict | None) -> dict | None:
+    if not daily_request:
+        return None
+
+    settings.ENABLED_SOURCES = ["arxiv"]
+    settings.TARGET_JOURNALS = []
+    settings.TARGET_DOMAINS = daily_request["arxiv_categories"]
+    settings.MAX_RESULTS = daily_request["max_results"]
+    settings.MAX_RESULTS_PER_SOURCE = {"arxiv": daily_request["max_results"]}
+
+    logger.info("应用本次网页 daily override:")
+    logger.info(f"  日期范围: {daily_request['date_from']} ~ {daily_request['date_to']}")
+    logger.info(f"  最大论文数: {daily_request['max_results']}")
+    logger.info(f"  ArXiv 分类: {daily_request['arxiv_categories']}")
+
+    return daily_request
 
 
 def parse_args():
@@ -75,6 +129,12 @@ def parse_args():
         nargs="+",
         default=None,
         help="[trend_research] 限制搜索的 ArXiv 分类，多个用空格分隔，如 quant-ph cond-mat.mes-hall；不指定则不限制分类",
+    )
+    parser.add_argument(
+        "--manual-run-request-file",
+        type=str,
+        default=None,
+        help="[daily_research] 网页触发的一次性运行参数 JSON 文件路径",
     )
     return parser.parse_args()
 
@@ -138,7 +198,12 @@ if __name__ == "__main__":
         log_file = setup_run_log("daily_research")
         logger.info(f"每日研究日志文件: {log_file}")
 
+        daily_request = _apply_manual_run_overrides(_load_manual_run_request(args.manual_run_request_file))
+
         from modes.daily_research import DailyResearchPipeline
 
         with run_lock("daily_research"):
-            DailyResearchPipeline().run()
+            DailyResearchPipeline(
+                date_from=daily_request["date_from"] if daily_request else None,
+                date_to=daily_request["date_to"] if daily_request else None,
+            ).run()

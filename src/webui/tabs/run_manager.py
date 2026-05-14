@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 import os
 import re
 import signal
@@ -22,6 +23,7 @@ from typing import Optional
 import streamlit as st
 
 from webui.i18n import t
+from webui.tabs.search import ARXIV_CATEGORIES
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _LOGS_DIR     = _PROJECT_ROOT / "logs"
@@ -29,6 +31,7 @@ _LOCK_DIR     = _PROJECT_ROOT / "data" / "run"
 _MAIN_PY      = _PROJECT_ROOT / "main.py"
 _WEBUI_PID_FILE  = _LOCK_DIR / "webui_triggered.pid"
 _TRIGGER_FILE    = _LOCK_DIR / "webui_run_trigger.flag"
+_MANUAL_RUN_REQUEST_FILE = _LOCK_DIR / "webui_manual_run_request.json"
 
 _IS_DOCKER_WEBUI = not _MAIN_PY.exists()
 
@@ -158,16 +161,84 @@ def _trigger_age_seconds() -> Optional[float]:
     return time.time() - _TRIGGER_FILE.stat().st_mtime
 
 
-def _write_trigger_file() -> tuple[bool, str]:
+def _collect_daily_request(flat: dict) -> tuple[dict, list[str]]:
+    default_days = max(int(flat.get("search_days", 7)), 1)
+    default_date_to = datetime.date.today()
+    default_date_from = default_date_to - datetime.timedelta(days=default_days - 1)
+    current_domains = flat.get("domains", ["quant-ph"])
+
+    st.caption(t("rm_run_override_hint"))
+
+    col1, col2 = st.columns(2)
+    with col1:
+        date_from = st.date_input(
+            t("trend_date_from"),
+            value=default_date_from,
+            key="rm_daily_date_from",
+        )
+    with col2:
+        date_to = st.date_input(
+            t("trend_date_to"),
+            value=default_date_to,
+            key="rm_daily_date_to",
+        )
+
+    col3, col4 = st.columns(2)
+    with col3:
+        max_results = st.number_input(
+            t("rm_daily_max_results_label"),
+            min_value=1,
+            max_value=1000,
+            value=int(flat.get("max_results", 100)),
+            key="rm_daily_max_results",
+            help=t("rm_daily_max_results_help"),
+        )
+    with col4:
+        selected_categories = st.multiselect(
+            t("select_arxiv_cats"),
+            options=ARXIV_CATEGORIES,
+            default=[d for d in current_domains if d in ARXIV_CATEGORIES],
+            key="rm_arxiv_categories",
+        )
+
+    categories = list(selected_categories)
+
+    errors = []
+    if date_from > date_to:
+        errors.append(t("tr_err_date_range"))
+    if not categories:
+        errors.append(t("rm_err_no_categories"))
+
+    request = {
+        "date_from": str(date_from),
+        "date_to": str(date_to),
+        "max_results": int(max_results),
+        "arxiv_categories": categories,
+    }
+    return request, errors
+
+
+def _write_daily_request_file(request: dict) -> None:
+    _LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    _MANUAL_RUN_REQUEST_FILE.write_text(
+        json.dumps(request, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _write_trigger_file(request: dict) -> tuple[bool, str]:
     try:
         _LOCK_DIR.mkdir(parents=True, exist_ok=True)
+        _write_daily_request_file(request)
         _TRIGGER_FILE.write_text("daily_research", encoding="utf-8")
         return True, ""
     except Exception as e:
         return False, str(e)
 
 
-def _render_run_control() -> None:
+def _render_run_control(flat: dict) -> None:
+    request, validation_errors = _collect_daily_request(flat)
+
     trigger_age   = _trigger_age_seconds()
     trigger_stale   = trigger_age is not None and trigger_age > 30
     trigger_pending = trigger_age is not None and not trigger_stale
@@ -179,7 +250,8 @@ def _render_run_control() -> None:
     webui_proc_running = bool(webui_pid and _is_process_running(webui_pid))
 
     if trigger_stale:
-        st.warning(f"⚠️ {t('rm_trigger_stale').format(n=int(trigger_age))}")
+        stale_seconds = int(trigger_age or 0)
+        st.warning(f"⚠️ {t('rm_trigger_stale').format(n=stale_seconds)}")
         if st.button(t("rm_clear_trigger_btn"), key="rm_clear_trigger"):
             _TRIGGER_FILE.unlink(missing_ok=True)
             st.rerun()
@@ -188,7 +260,10 @@ def _render_run_control() -> None:
     if trigger_pending:
         st.info(f"⏳ {t('rm_trigger_pending')}")
 
-    can_run = not trigger_pending and not is_running
+    for error in validation_errors:
+        st.error(error)
+
+    can_run = not trigger_pending and not is_running and not validation_errors
     col_run, col_stop, col_status = st.columns([1, 1, 3])
     with col_run:
         run_clicked = st.button(
@@ -214,7 +289,7 @@ def _render_run_control() -> None:
 
     if run_clicked:
         if _IS_DOCKER_WEBUI:
-            ok, err = _write_trigger_file()
+            ok, err = _write_trigger_file(request)
             if ok:
                 st.toast(t("rm_trigger_sent_short"), icon="✅")
                 st.rerun()
@@ -224,15 +299,22 @@ def _render_run_control() -> None:
             _LOCK_DIR.mkdir(parents=True, exist_ok=True)
             log_file = _LOGS_DIR / f"manual_{datetime.datetime.now():%Y%m%d_%H%M%S}.log"
             try:
+                _write_daily_request_file(request)
                 with open(log_file, "w") as lf:
                     proc = subprocess.Popen(
-                        [sys.executable, str(_MAIN_PY), "--mode", "daily_research"],
+                        [
+                            sys.executable,
+                            str(_MAIN_PY),
+                            "--mode",
+                            "daily_research",
+                            "--manual-run-request-file",
+                            str(_MANUAL_RUN_REQUEST_FILE),
+                        ],
                         cwd=str(_PROJECT_ROOT),
                         stdout=lf, stderr=lf, start_new_session=True,
                     )
                 _WEBUI_PID_FILE.write_text(str(proc.pid), encoding="utf-8")
                 st.toast(f"✅ {t('process_started')} (PID={proc.pid})", icon="✅")
-                time.sleep(0.5)
                 st.rerun()
             except Exception as e:
                 st.error(f"启动失败: {e}")
@@ -433,7 +515,7 @@ def render(_env_values: dict, config_values: dict) -> None:
         f'<p class="section-title">🚀 {t("run_now_section_title")}</p>',
         unsafe_allow_html=True,
     )
-    _render_run_control()
+    _render_run_control(flat)
 
     st.divider()
 

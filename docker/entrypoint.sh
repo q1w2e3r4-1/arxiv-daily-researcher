@@ -90,6 +90,7 @@ fi
 # The Streamlit config panel (WebUI container) can request a run by writing
 # a trigger file to the shared volume.  This background loop picks it up.
 TRIGGER_FILE="/app/data/run/webui_run_trigger.flag"
+MANUAL_RUN_REQUEST_FILE="/app/data/run/webui_manual_run_request.json"
 mkdir -p /app/data/run
 
 # Clear stale trigger file from previous container lifecycle to avoid
@@ -114,7 +115,11 @@ trigger_watcher() {
             PID_FILE="/app/data/run/webui_triggered.pid"
 
             # Launch python directly (no subshell) so $! is the actual Python PID
-            cd /app && python main.py --mode "$RUN_MODE" >> "$LOG_FILE" 2>&1 &
+            CMD=(python main.py --mode "$RUN_MODE")
+            if [ "$RUN_MODE" = "daily_research" ] && [ -f "$MANUAL_RUN_REQUEST_FILE" ]; then
+                CMD+=(--manual-run-request-file "$MANUAL_RUN_REQUEST_FILE")
+            fi
+            cd /app && "${CMD[@]}" >> "$LOG_FILE" 2>&1 &
             MAIN_PID=$!
             echo "$MAIN_PID" > "$PID_FILE"
             echo "[trigger-watcher] Launched PID=$MAIN_PID  log=$LOG_FILE"

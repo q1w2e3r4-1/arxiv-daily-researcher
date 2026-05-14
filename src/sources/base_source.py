@@ -29,7 +29,7 @@ class PaperMetadata:
     title: str  # 论文标题
     authors: List[str]  # 作者列表
     abstract: str  # 摘要
-    published_date: datetime  # 发布日期
+    published_date: Optional[datetime]  # 发布日期
     url: str  # 论文页面URL
     source: str  # 数据源标识（如 "arxiv", "prl", "pra"）
     pdf_url: Optional[str] = None  # PDF下载链接（如果可用）

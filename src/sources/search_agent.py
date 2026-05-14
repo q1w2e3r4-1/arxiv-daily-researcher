@@ -5,6 +5,7 @@
 """
 
 import logging
+from datetime import date
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -30,15 +31,15 @@ class SearchAgent:
     def __init__(
         self,
         history_dir: Path,
-        enabled_sources: List[str] = None,
-        arxiv_domains: List[str] = None,
-        journals: List[str] = None,
+        enabled_sources: Optional[List[str]] = None,
+        arxiv_domains: Optional[List[str]] = None,
+        journals: Optional[List[str]] = None,
         max_results: int = 100,
-        max_results_per_source: Dict[str, int] = None,
-        openalex_email: str = None,
-        openalex_api_key: str = None,
+        max_results_per_source: Optional[Dict[str, int]] = None,
+        openalex_email: Optional[str] = None,
+        openalex_api_key: Optional[str] = None,
         enable_semantic_scholar: bool = True,
-        semantic_scholar_api_key: str = None,
+        semantic_scholar_api_key: Optional[str] = None,
     ):
         """
         初始化搜索调度器。
@@ -144,12 +145,19 @@ class SearchAgent:
                 self.semantic_scholar_enricher.session.proxies.update(s2_proxy)
                 logger.info("[SearchAgent] Semantic Scholar 已配置网络代理")
 
-    def fetch_all_papers(self, days: int = 7) -> Dict[str, List[PaperMetadata]]:
+    def fetch_all_papers(
+        self,
+        days: int = 7,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+    ) -> Dict[str, List[PaperMetadata]]:
         """
         从所有启用的数据源抓取论文。
 
         参数:
             days: 搜索最近 N 天的论文
+            date_from: 显式开始日期（daily web override 可选）
+            date_to: 显式结束日期（daily web override 可选）
 
         返回:
             Dict[str, List[PaperMetadata]]: {数据源名: 论文列表}
@@ -162,7 +170,12 @@ class SearchAgent:
 
             try:
                 if source_name == "arxiv":
-                    papers = source.fetch_papers(days=days, domains=self.arxiv_domains)
+                    papers = source.fetch_papers(
+                        days=days,
+                        domains=self.arxiv_domains,
+                        date_from=date_from,
+                        date_to=date_to,
+                    )
                     results["arxiv"] = papers
 
                 elif source_name == "openalex":
