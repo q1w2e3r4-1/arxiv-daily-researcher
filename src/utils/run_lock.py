@@ -117,15 +117,21 @@ def _try_kill_stuck_process(pid: int) -> bool:
     return False
 
 
+def _read_lock_info(lock_file) -> str:
+    try:
+        lock_file.seek(0)
+        return lock_file.read().strip()
+    except Exception:
+        return ""
+
+
 def _recover_expired_lock(lock_file, task_desc: str, max_age_hours: int) -> bool:
     """当锁超龄时尝试回收。回收成功返回 True。"""
     if max_age_hours <= 0:
         return False
 
-    try:
-        lock_file.seek(0)
-        info = lock_file.read().strip()
-    except Exception:
+    info = _read_lock_info(lock_file)
+    if not info:
         return False
 
     pid, started_at = _parse_lock_info(info)
@@ -155,6 +161,8 @@ def run_lock(
     date_from=None,
     date_to=None,
     categories: Optional[List[str]] = None,
+    retry_interval_seconds: int = 0,
+    retry_max_attempts: int = 0,
 ):
     """
     获取运行锁；若相同任务已在运行则打印提示并以 exit(0) 退出。
@@ -193,42 +201,52 @@ def run_lock(
 
     lock_file = open(lock_path, "a+")
 
-    try:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except (IOError, OSError):
-        # 若锁已超龄，尝试回收并重试一次获取锁
-        recovered = _recover_expired_lock(lock_file, task_desc, max_age_hours)
-        acquired_after_recovery = False
-        if recovered:
-            try:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except (IOError, OSError):
-                pass
-            else:
-                acquired_after_recovery = True
+    retry_interval_seconds = max(0, int(retry_interval_seconds or 0))
+    retry_max_attempts = max(0, int(retry_max_attempts or 0))
+    retry_attempt = 0
 
-        if not acquired_after_recovery:
-            try:
-                lock_file.seek(0)
-                info = lock_file.read().strip()
-            except Exception:
-                info = ""
-            lock_file.close()
+    while True:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except (IOError, OSError):
+            # 若锁已超龄，尝试回收并重试一次获取锁
+            recovered = _recover_expired_lock(lock_file, task_desc, max_age_hours)
+            acquired_after_recovery = False
+            if recovered:
+                try:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except (IOError, OSError):
+                    pass
+                else:
+                    acquired_after_recovery = True
 
-            print("\n⚠️  相同任务正在运行中，跳过本次执行")
+            if acquired_after_recovery:
+                info = _read_lock_info(lock_file)
+                if info:
+                    print(f"ℹ️  已回收超龄运行锁: {info}")
+                break
+
+            info = _read_lock_info(lock_file)
+            if retry_attempt >= retry_max_attempts or retry_interval_seconds <= 0:
+                lock_file.close()
+                print("\n⚠️  相同任务正在运行中，跳过本次执行")
+                print(f"   任务: {task_desc}")
+                if info:
+                    print(f"   运行信息: {info}")
+                print(f"   锁文件: {lock_path}\n")
+                sys.exit(0)
+
+            retry_attempt += 1
+            print(
+                f"\n⏳  相同任务正在运行中，将在 {retry_interval_seconds} 秒后重试 "
+                f"({retry_attempt}/{retry_max_attempts})"
+            )
             print(f"   任务: {task_desc}")
             if info:
                 print(f"   运行信息: {info}")
             print(f"   锁文件: {lock_path}\n")
-            sys.exit(0)
-
-        try:
-            lock_file.seek(0)
-            info = lock_file.read().strip()
-        except Exception:
-            info = ""
-        if info:
-            print(f"ℹ️  已回收超龄运行锁: {info}")
+            time.sleep(retry_interval_seconds)
 
     # 写入诊断信息方便排查
     try:

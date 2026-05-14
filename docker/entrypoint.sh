@@ -69,7 +69,7 @@ printenv | grep -v "no_proxy" > /etc/environment
 
 # Create the cron job
 CRON_LOG="/app/logs/cron_\$(date +\%Y\%m\%d_\%H\%M\%S).log"
-CRON_CMD="cd /app && /usr/local/bin/python main.py >> $CRON_LOG 2>&1"
+CRON_CMD="cd /app && /usr/local/bin/python main.py --lock-retry-interval-seconds 1800 --lock-retry-max-attempts 40 >> $CRON_LOG 2>&1"
 echo "$CRON_SCHEDULE $CRON_CMD" > /etc/cron.d/arxiv-daily
 chmod 0644 /etc/cron.d/arxiv-daily
 crontab /etc/cron.d/arxiv-daily

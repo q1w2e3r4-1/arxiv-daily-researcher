@@ -136,6 +136,18 @@ def parse_args():
         default=None,
         help="[daily_research] 网页触发的一次性运行参数 JSON 文件路径",
     )
+    parser.add_argument(
+        "--lock-retry-interval-seconds",
+        type=int,
+        default=0,
+        help="[daily_research] 撞锁后的重试间隔（秒），默认 0 表示不重试",
+    )
+    parser.add_argument(
+        "--lock-retry-max-attempts",
+        type=int,
+        default=0,
+        help="[daily_research] 撞锁后的最大重试次数，默认 0 表示不重试",
+    )
     return parser.parse_args()
 
 
@@ -202,7 +214,11 @@ if __name__ == "__main__":
 
         from modes.daily_research import DailyResearchPipeline
 
-        with run_lock("daily_research"):
+        with run_lock(
+            "daily_research",
+            retry_interval_seconds=args.lock_retry_interval_seconds,
+            retry_max_attempts=args.lock_retry_max_attempts,
+        ):
             DailyResearchPipeline(
                 date_from=daily_request["date_from"] if daily_request else None,
                 date_to=daily_request["date_to"] if daily_request else None,
