@@ -84,7 +84,7 @@ class ArxivSource(BasePaperSource):
 
         参数:
             history_dir: 历史记录存储目录
-            max_results: 每个领域最多抓取的论文数
+            max_results: 每个领域最多保留的新论文数
             proxy_dict: 代理配置字典，如 {"http": "...", "https": "..."}
         """
         super().__init__("arxiv", history_dir)
@@ -143,11 +143,12 @@ class ArxivSource(BasePaperSource):
             query = f"cat:{domain}"
             logger.info(f"  正在抓取领域 {domain}...")
 
-            # 内部请求量为用户配置的 3 倍，确保能在历史记录中找到足够的新论文
-            internal_max = self.max_results * 3
+            # 顺序遍历最新论文，并在收集到足够的新论文后立即停止。
+            # 这样既能跨过 history 中已处理/被时间过滤的结果，又不会突破用户配置的上限。
+            configured_limit = self.max_results if self.max_results > 0 else None
 
             search = arxiv.Search(
-                query=query, max_results=internal_max, sort_by=arxiv.SortCriterion.SubmittedDate
+                query=query, max_results=None, sort_by=arxiv.SortCriterion.SubmittedDate
             )
 
             # 添加重试机制
@@ -211,6 +212,12 @@ class ArxivSource(BasePaperSource):
                             )
                             all_papers[paper_id] = metadata
                             count += 1
+
+                            if configured_limit is not None and count >= configured_limit:
+                                logger.info(
+                                    f"    已达到配置上限 {configured_limit} 篇，停止继续获取"
+                                )
+                                break
 
                     # 增强诊断日志
                     logger.info(f"    领域 {domain}: 发现 {count} 篇新论文")
