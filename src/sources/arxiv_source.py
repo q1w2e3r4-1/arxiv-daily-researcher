@@ -67,6 +67,13 @@ class _timeout_guard:
         return False
 
 
+def _build_submitted_date_filter(date_from: date, date_to: date) -> str:
+    """构建 ArXiv submittedDate 查询过滤器。"""
+    date_from_str = date_from.strftime("%Y%m%d") + "0000"
+    date_to_str = date_to.strftime("%Y%m%d") + "2359"
+    return f"submittedDate:[{date_from_str} TO {date_to_str}]"
+
+
 class ArxivSource(BasePaperSource):
     """
     ArXiv 论文数据源。
@@ -152,6 +159,8 @@ class ArxivSource(BasePaperSource):
 
         for domain in domains:
             query = f"cat:{domain}"
+            if date_from and date_to:
+                query = f"({query}) AND {_build_submitted_date_filter(date_from, date_to)}"
             logger.info(f"  正在抓取领域 {domain}...")
 
             # 顺序遍历最新论文，并在收集到足够的新论文后立即停止。
@@ -177,14 +186,27 @@ class ArxivSource(BasePaperSource):
                     skipped_old = 0
                     consecutive_processed = 0
                     # 早停阈值：连续遇到已处理论文超过此数量则认为已到达上次抓取边界
-                    early_stop_threshold = 50
+                    early_stop_threshold = 100
 
                     with _timeout_guard(fetch_timeout_seconds):
                         for result in self.client.results(search):
                             api_total += 1
                             paper_id = result.get_short_id()
 
-                            # 去重：跳过已处理的论文
+                            # 时间过滤
+                            published_dt = result.published
+                            published_day = published_dt.date()
+                            if date_from and date_to:
+                                if published_day > date_to:
+                                    continue
+                                if published_day < date_from:
+                                    skipped_old += 1
+                                    break
+                            elif published_dt < cutoff_date:
+                                skipped_old += 1
+                                break
+
+                            # 去重：跳过已处理的论文（仅对时间窗口内的论文生效）
                             if self.is_processed(paper_id):
                                 skipped_processed += 1
                                 consecutive_processed += 1
@@ -201,19 +223,6 @@ class ArxivSource(BasePaperSource):
 
                             # 去重：跳过本次已抓取的论文
                             if paper_id in all_papers:
-                                continue
-
-                            # 时间过滤
-                            published_dt = result.published
-                            published_day = published_dt.date()
-                            if date_from and date_to:
-                                if published_day > date_to:
-                                    continue
-                                if published_day < date_from:
-                                    skipped_old += 1
-                                    break
-                            elif published_dt < cutoff_date:
-                                skipped_old += 1
                                 continue
 
                             # 转换为统一格式
@@ -361,10 +370,7 @@ class ArxivSource(BasePaperSource):
                 cat_query = f"({' OR '.join(cat_parts)})"
             keyword_query = f"({keyword_query}) AND {cat_query}"
 
-        # 时间范围过滤（ArXiv 格式：YYYYMMDDTTTT）
-        date_from_str = date_from.strftime("%Y%m%d") + "0000"
-        date_to_str = date_to.strftime("%Y%m%d") + "2359"
-        date_filter = f"submittedDate:[{date_from_str} TO {date_to_str}]"
+        date_filter = _build_submitted_date_filter(date_from, date_to)
 
         full_query = f"({keyword_query}) AND {date_filter}"
 
