@@ -178,6 +178,7 @@ config_values = load_config()
 tab_labels = [
     t("tab_run_manager"),  # 运行管理
     t("tab_reports"),  # 报告查看
+    t("tab_reports_db"),  # 数据库汇总
     t("tab_trend_runner"),  # 趋势分析
     t("tab_keywords"),  # 关键词
     t("tab_search"),  # 搜索与数据源
@@ -197,28 +198,31 @@ with tabs[1]:
     reports.render(env_values, config_values)
 
 with tabs[2]:
-    trend_runner.render(env_values, config_values)
+    reports.render_db_summary(env_values, config_values)
 
 with tabs[3]:
-    keywords.render(env_values, config_values)
+    trend_runner.render(env_values, config_values)
 
 with tabs[4]:
-    search.render(env_values, config_values)
+    keywords.render(env_values, config_values)
 
 with tabs[5]:
-    scoring.render(env_values, config_values)
+    search.render(env_values, config_values)
 
 with tabs[6]:
-    notifications.render(env_values, config_values)
+    scoring.render(env_values, config_values)
 
 with tabs[7]:
-    data_management.render(env_values, config_values)
+    notifications.render(env_values, config_values)
 
 with tabs[8]:
-    llm.render(env_values, config_values)
+    data_management.render(env_values, config_values)
 
 with tabs[9]:
-    proxy.render(env_values, config_values)
+    llm.render(env_values, config_values)
 
 with tabs[10]:
+    proxy.render(env_values, config_values)
+
+with tabs[11]:
     advanced.render(env_values, config_values)

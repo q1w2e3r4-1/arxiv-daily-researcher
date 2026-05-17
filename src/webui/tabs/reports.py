@@ -468,10 +468,92 @@ def _render_analysis_html(analysis: dict[str, Any]) -> str:
     return "".join(parts)
 
 
+def _get_visible_db_summary(paper: dict[str, Any]) -> str:
+    score = paper.get("score") or {}
+    abstract_cn = (paper.get("abstract_cn") or "").strip()
+    abstract = (paper.get("abstract") or "").strip()
+    if bool(score.get("is_qualified")) and abstract_cn:
+        return abstract_cn
+    return abstract
+
+
+def _render_db_paper_html(idx: int, paper: dict[str, Any]) -> str:
+    score = paper["score"]
+    is_qualified = bool(score.get("is_qualified"))
+    cls = "pass" if is_qualified else "fail"
+    badge_text = "PASS" if is_qualified else "FAIL"
+    title_html = _escape(paper["title"])
+    url = paper.get("url") or ""
+    if url:
+        title_html = f'<a href="{_escape(url)}" target="_blank">{idx}. {title_html}</a>'
+    else:
+        title_html = f"{idx}. {title_html}"
+
+    metadata_rows: list[str] = []
+    if paper.get("authors"):
+        metadata_rows.append(f'<div class="meta-row"><strong>作者</strong>: {_escape(paper["authors"])}</div>')
+    source_label = (paper.get("journal") or paper.get("source") or "").strip()
+    if source_label:
+        metadata_rows.append(f'<div class="meta-row"><strong>期刊/来源</strong>: {_escape(source_label)}</div>')
+    metadata_rows.append(f'<div class="meta-row"><strong>发布日期</strong>: {_escape(paper.get("published", "N/A"))}</div>')
+    if paper.get("url"):
+        metadata_rows.append(
+            f'<div class="meta-row"><strong>链接</strong>: <a href="{_escape(paper["url"])}" target="_blank">{_escape(paper["url"])}</a></div>'
+        )
+    if paper.get("doi"):
+        metadata_rows.append(f'<div class="meta-row"><strong>DOI</strong>: {_escape(paper["doi"])}</div>')
+
+    model_scores = ""
+    judgments = score.get("model_judgments") or []
+    if judgments:
+        model_scores = " | ".join(
+            f"{row.get('model', '')}: {float(row.get('final_score', 0)):.1f}" for row in judgments
+        )
+
+    summary = _get_visible_db_summary(paper)
+    analysis_html = _render_analysis_html(paper.get("analysis") or {})
+
+    parts = [
+        f'<div class="paper {cls}">',
+        f'<h3>{title_html} <span class="badge {cls}">{badge_text}</span></h3>',
+        '<div class="module">',
+        *metadata_rows,
+        '</div>',
+    ]
+
+    if summary:
+        parts.extend([
+            '<div class="module">',
+            '<div class="module-label">摘要</div>',
+            f'<blockquote>{_escape(summary)}</blockquote>',
+            '</div>',
+        ])
+
+    parts.extend([
+        '<div class="module">',
+        '<div class="module-label">评分</div>',
+        f'<div class="meta-row"><strong>总分</strong>: <span class="score">{float(score.get("total_score", 0)):.1f}</span></div>',
+        f'<div class="meta-row"><strong>通过线</strong>: {float(score.get("passing_score", 0)):.1f}</div>',
+    ])
+    if model_scores:
+        parts.append(f'<div class="meta-row"><strong>Committee Scores</strong>: {_escape(model_scores)}</div>')
+    parts.append('</div>')
+
+    if analysis_html:
+        parts.extend([
+            '<div class="module">',
+            analysis_html,
+            '</div>',
+        ])
+
+    parts.append('</div>')
+    return "".join(parts)
+
+
 def _render_db_window_html(title: str, papers: list[dict[str, Any]]) -> str:
-    qualified_count = sum(1 for p in papers if p["score"].get("is_qualified"))
+    qualified_papers = [p for p in papers if p["score"].get("is_qualified")]
     analyzed_count = sum(1 for p in papers if p.get("analysis"))
-    pass_rate = (qualified_count / len(papers) * 100) if papers else 0
+    pass_rate = (len(qualified_papers) / len(papers) * 100) if papers else 0
 
     parts = [
         "<!DOCTYPE html>",
@@ -480,101 +562,56 @@ def _render_db_window_html(title: str, papers: list[dict[str, Any]]) -> str:
         '<meta name="viewport" content="width=device-width,initial-scale=1">',
         f"<title>{_escape(title)}</title>",
         "<style>"
-        "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:16px;color:#111827;background:#fff;}"
+        "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:20px;color:#111827;background:#ffffff;line-height:1.7;}"
+        "h1{margin:0 0 8px;font-size:28px;}"
+        "h2{margin:28px 0 14px;font-size:22px;border-bottom:1px solid #e5e7eb;padding-bottom:8px;}"
+        "h3{margin:0 0 12px;font-size:20px;}"
+        ".muted{color:#6b7280;}"
         ".stats-bar{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0 24px;}"
         ".stat{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:12px 16px;min-width:110px;}"
         ".num{font-size:28px;font-weight:700;}"
         ".label{font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;}"
-        ".card{border:1px solid #e5e7eb;border-left-width:6px;border-radius:12px;padding:16px;margin:0 0 16px;background:#fff;}"
-        ".card.pass{border-left-color:#16a34a;background:#f0fdf4;}"
-        ".card.fail{border-left-color:#dc2626;background:#fef2f2;}"
-        ".card-title{font-size:18px;font-weight:700;margin-bottom:8px;display:flex;justify-content:space-between;gap:12px;align-items:flex-start;}"
-        ".card-title a{text-decoration:none;color:#111827;}"
-        ".badge{font-size:12px;font-weight:700;border-radius:999px;padding:4px 10px;white-space:nowrap;}"
+        ".paper{border:1px solid #e5e7eb;border-left:6px solid #d1d5db;border-radius:12px;padding:18px;margin:0 0 18px;background:#ffffff;}"
+        ".paper.pass{border-left-color:#16a34a;background:#f0fdf4;}"
+        ".paper.fail{border-left-color:#dc2626;background:#fffaf9;}"
+        ".badge{font-size:12px;font-weight:700;border-radius:999px;padding:4px 10px;white-space:nowrap;vertical-align:middle;}"
         ".badge.pass{background:#dcfce7;color:#166534;}"
         ".badge.fail{background:#fee2e2;color:#991b1b;}"
-        ".field{margin:4px 0;color:#374151;}"
-        ".field-label{font-weight:600;color:#111827;}"
+        ".module{margin-top:12px;}"
+        ".module-label{font-weight:700;margin-bottom:6px;color:#111827;}"
+        ".meta-row{margin:4px 0;color:#374151;}"
         ".score{font-weight:700;}"
-        ".summary{margin-top:10px;line-height:1.6;white-space:pre-wrap;}"
-        ".muted{color:#6b7280;}"
+        "blockquote{margin:8px 0 0;padding:10px 14px;border-left:4px solid #9ca3af;background:#f9fafb;white-space:pre-wrap;}"
         ".analysis-content{margin-top:8px;}"
-        "details{margin-top:12px;}"
+        "details{margin-top:8px;}"
+        "a{text-decoration:none;color:#0f766e;}"
         "</style>",
         "</head><body>",
         f"<h1>{_escape(title)}</h1>",
-        f'<p class="muted">Generated: {_escape(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))}</p>',
+        f'<p class="muted">生成时间: {_escape(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))}</p>',
         '<div class="stats-bar">',
         f'<div class="stat"><div class="num">{len(papers)}</div><div class="label">Total</div></div>',
-        f'<div class="stat"><div class="num">{qualified_count}</div><div class="label">Qualified</div></div>',
-        f'<div class="stat"><div class="num">{len(papers) - qualified_count}</div><div class="label">Rejected</div></div>',
+        f'<div class="stat"><div class="num">{len(qualified_papers)}</div><div class="label">Qualified</div></div>',
+        f'<div class="stat"><div class="num">{len(papers) - len(qualified_papers)}</div><div class="label">Rejected</div></div>',
         f'<div class="stat"><div class="num">{analyzed_count}</div><div class="label">Analyzed</div></div>',
         f'<div class="stat"><div class="num">{pass_rate:.0f}%</div><div class="label">Pass Rate</div></div>',
         "</div>",
     ]
 
+    if qualified_papers:
+        parts.append("<h2>⭐ 及格论文详细分析</h2>")
+        for idx, paper in enumerate(qualified_papers, 1):
+            parts.append(_render_db_paper_html(idx, paper))
+
+    parts.append("<h2>📋 所有论文列表</h2>")
     for idx, paper in enumerate(papers, 1):
-        score = paper["score"]
-        is_qualified = bool(score.get("is_qualified"))
-        cls = "pass" if is_qualified else "fail"
-        badge_text = "PASS" if is_qualified else "FAIL"
-        title_html = _escape(paper["title"])
-        url = paper.get("url") or ""
-        if url:
-            title_html = f'<a href="{_escape(url)}" target="_blank">{idx}. {title_html}</a>'
-        else:
-            title_html = f"{idx}. {title_html}"
-
-        parts.append(f'<div class="card {cls}">')
-        parts.append(
-            f'<div class="card-title">{title_html}<span class="badge {cls}">{badge_text}</span></div>'
-        )
-        parts.append(
-            f'<div class="field"><span class="field-label">Score:</span> '
-            f'<span class="score">{float(score.get("total_score", 0)):.1f}</span> / {float(score.get("passing_score", 0)):.1f}</div>'
-        )
-        if paper.get("authors"):
-            parts.append(
-                f'<div class="field"><span class="field-label">Authors:</span> {_escape(paper["authors"])}</div>'
-            )
-        parts.append(
-            f'<div class="field"><span class="field-label">Published:</span> {_escape(paper.get("published", "N/A"))}</div>'
-        )
-        parts.append(
-            f'<div class="field"><span class="field-label">Source:</span> {_escape((paper.get("source") or "").upper())}</div>'
-        )
-
-        judgments = score.get("model_judgments") or []
-        if judgments:
-            model_scores = " | ".join(
-                f"{row.get('model', '')}: {float(row.get('final_score', 0)):.1f}" for row in judgments
-            )
-            if model_scores:
-                parts.append(
-                    f'<div class="field"><span class="field-label">Model Scores:</span> {_escape(model_scores)}</div>'
-                )
-
-        reasoning = (score.get("reasoning") or "").strip()
-        if reasoning:
-            parts.append(f'<div class="summary"><strong>Reasoning:</strong> {_escape(reasoning)}</div>')
-
-        visible_summary = (paper.get("abstract_cn") or "").strip() if is_qualified else ""
-        if not visible_summary:
-            visible_summary = (paper.get("abstract") or "").strip()
-        if visible_summary:
-            parts.append(f'<div class="summary"><strong>摘要:</strong> {_escape(visible_summary)}</div>')
-
-        analysis_html = _render_analysis_html(paper.get("analysis") or {})
-        if analysis_html:
-            parts.append(analysis_html)
-
-        parts.append("</div>")
+        parts.append(_render_db_paper_html(idx, paper))
 
     parts.append("</body></html>")
     return "\n".join(parts)
 
 
-def _render_db_window_summary() -> None:
+def render_db_summary(_env_values: dict, _config_values: dict) -> None:
     st.markdown(
         f'<p class="section-title">🗂️ {t("reports_db_window_title")}</p>',
         unsafe_allow_html=True,
@@ -621,16 +658,6 @@ def _render_db_window_summary() -> None:
         st.info(t("reports_db_empty"))
         return
 
-    qualified_count = sum(1 for p in papers if p["score"].get("is_qualified"))
-    rejected_count = len(papers) - qualified_count
-    analysis_count = sum(1 for p in papers if p.get("analysis"))
-
-    metric_cols = st.columns(4)
-    metric_cols[0].metric(t("reports_db_metric_total"), len(papers))
-    metric_cols[1].metric(t("reports_db_metric_qualified"), qualified_count)
-    metric_cols[2].metric(t("reports_db_metric_rejected"), rejected_count)
-    metric_cols[3].metric(t("reports_db_metric_analyzed"), analysis_count)
-
     title = f"{t('reports_db_summary_title_prefix')} {date_from.isoformat()} → {date_to.isoformat()}"
     html_content = _render_db_window_html(title, papers)
     components.html(html_content, height=800, scrolling=True)
@@ -646,9 +673,6 @@ def render(_env_values: dict, _config_values: dict) -> None:
         f'<p class="hint-text">{t("reports_hint")}</p>',
         unsafe_allow_html=True,
     )
-
-    _render_db_window_summary()
-    st.divider()
 
     # 工具栏：刷新 + 非ArXiv过滤开关
     col_refresh, col_filter, _ = st.columns([1, 2, 3])

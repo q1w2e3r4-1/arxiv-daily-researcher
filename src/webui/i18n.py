@@ -54,6 +54,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     "tab_notifications": {"zh": "通知", "en": "Notifications"},
     "tab_advanced": {"zh": "高级设置", "en": "Advanced"},
     "tab_reports": {"zh": "报告查看", "en": "Reports"},
+    "tab_reports_db": {"zh": "数据库汇总", "en": "Database Summary"},
     "tab_run_manager": {"zh": "每日推送", "en": "Daily Push"},
     "tab_trend_runner": {"zh": "趋势分析", "en": "Trend Analysis"},
     # ── llm.py ───────────────────────────────────────────────────────────
