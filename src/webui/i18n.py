@@ -681,6 +681,35 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     "reports_mtime": {"zh": "生成时间", "en": "Generated"},
     "reports_height": {"zh": "预览高度", "en": "Preview Height"},
     "reports_load_error": {"zh": "报告加载失败", "en": "Failed to load report"},
+    "reports_db_window_title": {"zh": "数据库时间窗口视图", "en": "Database Time Window View"},
+    "reports_db_window_hint": {
+        "zh": "直接从 daily_research 数据库读取指定时间范围内的论文，默认仅显示通过论文，可选包含未通过论文。",
+        "en": "Read papers directly from the daily_research database for a selected date window. By default only qualified papers are shown, with an option to include rejected papers.",
+    },
+    "reports_db_missing": {
+        "zh": "未找到 daily_research 数据库，请先运行一次每日研究任务。",
+        "en": "daily_research database not found. Run a daily research job first.",
+    },
+    "reports_db_date_from": {"zh": "起始日期", "en": "Start Date"},
+    "reports_db_date_to": {"zh": "结束日期", "en": "End Date"},
+    "reports_db_include_rejected": {"zh": "包含未通过论文", "en": "Include rejected papers"},
+    "reports_db_include_rejected_help": {
+        "zh": "关闭时只显示通过论文；开启后同时显示未通过论文。",
+        "en": "When off, only qualified papers are shown. When on, rejected papers are included too.",
+    },
+    "reports_db_invalid_range": {
+        "zh": "起始日期不能晚于结束日期。",
+        "en": "Start date cannot be later than end date.",
+    },
+    "reports_db_empty": {
+        "zh": "该时间范围内暂无可展示论文。",
+        "en": "No displayable papers were found in this date range.",
+    },
+    "reports_db_metric_total": {"zh": "论文总数", "en": "Total Papers"},
+    "reports_db_metric_qualified": {"zh": "通过论文", "en": "Qualified Papers"},
+    "reports_db_metric_rejected": {"zh": "未通过论文", "en": "Rejected Papers"},
+    "reports_db_metric_analyzed": {"zh": "深度分析", "en": "Analyzed Papers"},
+    "reports_db_summary_title_prefix": {"zh": "数据库汇总", "en": "Database Summary"},
     # ── trend_runner.py 新增 i18n ──
     "tr_section_params": {"zh": "分析参数", "en": "Analysis Parameters"},
     "tr_section_run_control": {"zh": "运行控制", "en": "Run Control"},
