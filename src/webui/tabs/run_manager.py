@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Optional
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from webui.i18n import t
 from webui.tabs.search import ARXIV_CATEGORIES
@@ -38,6 +39,7 @@ _IS_DOCKER_WEBUI = not _MAIN_PY.exists()
 # session_state 键（日志查看器）
 _LOG_ACTIVE = "rm_log_active_path"    # 当前展示的日志路径（str）
 _LOG_CLOSED = "rm_log_viewer_closed"  # 是否关闭内容区
+_DAILY_LOCK_FILE = _LOCK_DIR / "daily_research.lock"
 
 
 # ─── 工具函数 ────────────────────────────────────────────────────────────────
@@ -131,6 +133,53 @@ def _get_all_running_procs() -> list[tuple[Path, int]]:
         if pid and _is_process_running(pid):
             running.append((f, pid))
     return running
+
+
+def _get_daily_run_status() -> dict:
+    trigger_age = _trigger_age_seconds()
+    trigger_stale = trigger_age is not None and trigger_age > 30
+    trigger_pending = trigger_age is not None and not trigger_stale
+    trigger_consumed = _WEBUI_PID_FILE.exists()
+    lock_exists = _DAILY_LOCK_FILE.exists()
+
+    if trigger_stale:
+        state = "stale_trigger"
+    elif trigger_pending:
+        state = "pending"
+    elif lock_exists:
+        state = "running"
+    elif _IS_DOCKER_WEBUI and trigger_consumed:
+        state = "starting"
+    else:
+        state = "idle"
+
+    return {
+        "state": state,
+        "trigger_age": trigger_age,
+        "trigger_stale": trigger_stale,
+        "trigger_pending": trigger_pending,
+        "trigger_consumed": trigger_consumed,
+        "lock_exists": lock_exists,
+        "lock_pid": _read_pid_from_file(_DAILY_LOCK_FILE) if lock_exists else None,
+        "webui_pid": _read_pid_from_file(_WEBUI_PID_FILE) if _WEBUI_PID_FILE.exists() else None,
+    }
+
+
+def _auto_refresh(interval_ms: int, key: str) -> None:
+    components.html(
+        f"""
+        <script>
+        const key = {json.dumps(key)};
+        const now = Date.now();
+        const last = window.sessionStorage.getItem(key);
+        if (!last || now - Number(last) > {max(interval_ms - 500, 0)}) {{
+            window.sessionStorage.setItem(key, String(now));
+            setTimeout(() => window.parent.location.reload(), {interval_ms});
+        }}
+        </script>
+        """,
+        height=0,
+    )
 
 
 def _do_stop_all() -> None:
@@ -229,6 +278,7 @@ def _write_daily_request_file(request: dict) -> None:
 def _write_trigger_file(request: dict) -> tuple[bool, str]:
     try:
         _LOCK_DIR.mkdir(parents=True, exist_ok=True)
+        _WEBUI_PID_FILE.unlink(missing_ok=True)
         _write_daily_request_file(request)
         _TRIGGER_FILE.write_text("daily_research", encoding="utf-8")
         return True, ""
@@ -238,32 +288,41 @@ def _write_trigger_file(request: dict) -> tuple[bool, str]:
 
 def _render_run_control(flat: dict) -> None:
     request, validation_errors = _collect_daily_request(flat)
+    status = _get_daily_run_status()
+    state = status["state"]
 
-    trigger_age   = _trigger_age_seconds()
-    trigger_stale   = trigger_age is not None and trigger_age > 30
-    trigger_pending = trigger_age is not None and not trigger_stale
+    active_locks = _get_all_running_procs() if not _IS_DOCKER_WEBUI else []
+    local_running = bool(active_locks)
+    webui_pid = status["webui_pid"]
+    webui_proc_running = bool(webui_pid and _is_process_running(webui_pid)) if not _IS_DOCKER_WEBUI else False
 
-    active_locks = _get_all_running_procs()
-    is_running   = bool(active_locks)
-
-    webui_pid = _read_pid_from_file(_WEBUI_PID_FILE) if _WEBUI_PID_FILE.exists() else None
-    webui_proc_running = bool(webui_pid and _is_process_running(webui_pid))
-
-    if trigger_stale:
-        stale_seconds = int(trigger_age or 0)
+    if state == "stale_trigger":
+        stale_seconds = int(status["trigger_age"] or 0)
         st.warning(f"⚠️ {t('rm_trigger_stale').format(n=stale_seconds)}")
         if st.button(t("rm_clear_trigger_btn"), key="rm_clear_trigger"):
             _TRIGGER_FILE.unlink(missing_ok=True)
             st.rerun()
         return
 
-    if trigger_pending:
+    if state == "pending":
         st.info(f"⏳ {t('rm_trigger_pending')}")
+    elif state == "starting":
+        st.info(f"🟡 {t('rm_status_starting')}")
 
     for error in validation_errors:
         st.error(error)
 
-    can_run = not trigger_pending and not is_running and not validation_errors
+    if _IS_DOCKER_WEBUI:
+        is_running = state in {"pending", "starting", "running"}
+        can_run = state == "idle" and not validation_errors
+        stop_disabled = True
+        stop_help = t("rm_stop_disabled_docker")
+    else:
+        is_running = local_running
+        can_run = state != "pending" and not is_running and not validation_errors
+        stop_disabled = not is_running
+        stop_help = t("stop_all_hint")
+
     col_run, col_stop, col_status = st.columns([1, 1, 3])
     with col_run:
         run_clicked = st.button(
@@ -274,18 +333,36 @@ def _render_run_control(flat: dict) -> None:
         stop_clicked = st.button(
             "⏹ " + t("stop_all_btn"), key="rm_stop_all",
             type="secondary", use_container_width=True,
-            help=t("stop_all_hint"), disabled=not is_running,
+            help=stop_help, disabled=stop_disabled,
         )
     with col_status:
-        if is_running:
-            lock_info = ", ".join(f"`{f.name}` PID={pid}" for f, pid in active_locks)
-            st.info(f"🟢 {t('rm_status_running')} — {lock_info}")
-        elif webui_proc_running:
-            st.info(f"🟢 {t('rm_process_running_label')} (PID={webui_pid})")
-        elif trigger_pending:
-            st.caption(t("rm_trigger_pending_short"))
+        if _IS_DOCKER_WEBUI:
+            if state == "running":
+                lock_info = f"`{_DAILY_LOCK_FILE.name}`"
+                if status["lock_pid"]:
+                    lock_info += f" PID={status['lock_pid']}"
+                st.info(f"🟢 {t('rm_status_running')} — {lock_info}")
+            elif state == "starting":
+                pid_hint = f" (PID={webui_pid})" if webui_pid else ""
+                st.info(f"🟡 {t('rm_status_starting')}{pid_hint}")
+            elif state == "pending":
+                st.caption(t("rm_trigger_pending_short"))
+            else:
+                _show_last_run_hint()
         else:
-            _show_last_run_hint()
+            if local_running:
+                lock_info = ", ".join(f"`{f.name}` PID={pid}" for f, pid in active_locks)
+                st.info(f"🟢 {t('rm_status_running')} — {lock_info}")
+            elif webui_proc_running:
+                st.info(f"🟢 {t('rm_process_running_label')} (PID={webui_pid})")
+            elif state == "pending":
+                st.caption(t("rm_trigger_pending_short"))
+            else:
+                _show_last_run_hint()
+
+    if state in {"pending", "starting", "running"}:
+        interval_ms = 2000 if state in {"pending", "starting"} else 4000
+        _auto_refresh(interval_ms, key=f"rm-auto-refresh-{state}")
 
     if run_clicked:
         if _IS_DOCKER_WEBUI:
@@ -319,7 +396,7 @@ def _render_run_control(flat: dict) -> None:
             except Exception as e:
                 st.error(f"启动失败: {e}")
 
-    if stop_clicked:
+    if stop_clicked and not _IS_DOCKER_WEBUI:
         _do_stop_all()
 
 
@@ -348,12 +425,17 @@ def _render_status() -> None:
         return
 
     for f in lock_files:
-        pid        = _read_pid_from_file(f)
-        is_running = bool(pid and _is_process_running(pid))
-        icon       = "🟢" if is_running else "🔴"
-        status     = t("rm_status_running") if is_running else t("rm_status_stopped")
-        pid_str    = f"PID={pid}" if pid else t("rm_no_pid")
-        mtime      = datetime.datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        pid = _read_pid_from_file(f)
+        if _IS_DOCKER_WEBUI:
+            is_running = True
+            icon = "🟢"
+            status = t("rm_status_running_lock")
+        else:
+            is_running = bool(pid and _is_process_running(pid))
+            icon = "🟢" if is_running else "🔴"
+            status = t("rm_status_running") if is_running else t("rm_status_stopped")
+        pid_str = f"PID={pid}" if pid else t("rm_no_pid")
+        mtime = datetime.datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
 
         cols = st.columns([5, 1])
         with cols[0]:

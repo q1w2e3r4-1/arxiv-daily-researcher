@@ -184,6 +184,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "No running tasks (no lock/PID files).",
     },
     "rm_status_running": {"zh": "运行中", "en": "Running"},
+    "rm_status_running_lock": {
+        "zh": "运行中（基于锁文件）",
+        "en": "Running (based on lock file)",
+    },
+    "rm_status_starting": {"zh": "主容器已响应，任务启动中", "en": "Main container acknowledged, task is starting"},
     "rm_status_stopped": {"zh": "已停止（文件未清除）", "en": "Stopped (file not cleaned)"},
     "rm_no_pid": {"zh": "无 PID", "en": "No PID"},
     "rm_started_at": {"zh": "启动于", "en": "Started at"},
@@ -728,12 +733,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Docker mode: communicates with the researcher container via trigger file (no Docker socket needed)",
     },
     "rm_trigger_pending": {
-        "zh": "已发送运行请求，等待主研究容器响应（最多 10 秒）...",
-        "en": "Run request sent, waiting for researcher container to respond (up to 10s)...",
+        "zh": "已发送运行请求，等待主研究容器响应，页面会自动刷新...",
+        "en": "Run request sent, waiting for researcher container to respond. The page will refresh automatically...",
     },
     "rm_trigger_pending_short": {
-        "zh": "等待主容器响应中...",
-        "en": "Waiting for main container...",
+        "zh": "等待主容器响应中（自动刷新）...",
+        "en": "Waiting for main container (auto-refresh)...",
     },
     "rm_trigger_sent": {
         "zh": "✅ 已发送运行请求！主研究容器将在 5-10 秒内启动任务，日志将在「运行日志」区实时更新。",
@@ -754,8 +759,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     },
     "rm_clear_trigger_btn": {"zh": "🗑 清除触发文件", "en": "🗑 Clear Trigger File"},
     "rm_trigger_sent_short": {
-        "zh": "已发送运行请求！主容器将在 5-10s 内启动",
-        "en": "Run request sent! Container will start within 5-10s",
+        "zh": "已发送运行请求，页面将自动刷新状态",
+        "en": "Run request sent. The page will refresh automatically",
+    },
+    "rm_stop_disabled_docker": {
+        "zh": "独立 WebUI 容器无法可靠停止主研究容器中的进程，请到主容器或宿主机侧操作。",
+        "en": "The standalone WebUI container cannot reliably stop processes in the researcher container. Stop them from the main container or host.",
     },
     "rm_last_run_at": {"zh": "上次运行完成", "en": "Last run completed"},
     "rm_clean_lock_btn": {"zh": "清理", "en": "Clean"},

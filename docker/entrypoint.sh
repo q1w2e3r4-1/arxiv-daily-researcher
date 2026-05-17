@@ -114,15 +114,20 @@ trigger_watcher() {
             LOG_FILE="/app/logs/manual_$(date +%Y%m%d_%H%M%S).log"
             PID_FILE="/app/data/run/webui_triggered.pid"
 
-            # Launch python directly (no subshell) so $! is the actual Python PID
+            # Launch through a lightweight wrapper so the PID marker lifecycle
+            # follows the actual task without a polling loop.
             CMD=(python main.py --mode "$RUN_MODE")
             if [ "$RUN_MODE" = "daily_research" ] && [ -f "$MANUAL_RUN_REQUEST_FILE" ]; then
                 CMD+=(--manual-run-request-file "$MANUAL_RUN_REQUEST_FILE")
             fi
-            cd /app && "${CMD[@]}" >> "$LOG_FILE" 2>&1 &
-            MAIN_PID=$!
-            echo "$MAIN_PID" > "$PID_FILE"
-            echo "[trigger-watcher] Launched PID=$MAIN_PID  log=$LOG_FILE"
+            (
+                echo "$$" > "$PID_FILE"
+                echo "[trigger-watcher] Accepted run request  marker_pid=$$  log=$LOG_FILE"
+                cd /app
+                "${CMD[@]}" >> "$LOG_FILE" 2>&1
+                rm -f "$PID_FILE"
+                echo "[trigger-watcher] PID marker cleared  marker_pid=$$"
+            ) &
         fi
         sleep 5
     done
