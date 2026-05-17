@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Optional
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from webui.i18n import t
 from webui.tabs.search import ARXIV_CATEGORIES
@@ -40,6 +39,7 @@ _IS_DOCKER_WEBUI = not _MAIN_PY.exists()
 _LOG_ACTIVE = "rm_log_active_path"    # 当前展示的日志路径（str）
 _LOG_CLOSED = "rm_log_viewer_closed"  # 是否关闭内容区
 _DAILY_LOCK_FILE = _LOCK_DIR / "daily_research.lock"
+_DOCKER_STARTING_STALE_SECONDS = 120
 
 
 # ─── 工具函数 ────────────────────────────────────────────────────────────────
@@ -135,21 +135,30 @@ def _get_all_running_procs() -> list[tuple[Path, int]]:
     return running
 
 
+def _pid_file_age_seconds(path: Path) -> Optional[float]:
+    if not path.exists():
+        return None
+    return time.time() - path.stat().st_mtime
+
+
 def _get_daily_run_status() -> dict:
     trigger_age = _trigger_age_seconds()
     trigger_stale = trigger_age is not None and trigger_age > 30
     trigger_pending = trigger_age is not None and not trigger_stale
-    trigger_consumed = _WEBUI_PID_FILE.exists()
     lock_exists = _DAILY_LOCK_FILE.exists()
+    webui_pid_exists = _WEBUI_PID_FILE.exists()
+    webui_pid_age = _pid_file_age_seconds(_WEBUI_PID_FILE)
+    starting_stale = webui_pid_age is not None and webui_pid_age > _DOCKER_STARTING_STALE_SECONDS
+    trigger_consumed = webui_pid_exists and not starting_stale
 
-    if trigger_stale:
-        state = "stale_trigger"
+    if lock_exists:
+        state = "running"
     elif trigger_pending:
         state = "pending"
-    elif lock_exists:
-        state = "running"
     elif _IS_DOCKER_WEBUI and trigger_consumed:
         state = "starting"
+    elif trigger_stale:
+        state = "stale_trigger"
     else:
         state = "idle"
 
@@ -161,25 +170,20 @@ def _get_daily_run_status() -> dict:
         "trigger_consumed": trigger_consumed,
         "lock_exists": lock_exists,
         "lock_pid": _read_pid_from_file(_DAILY_LOCK_FILE) if lock_exists else None,
-        "webui_pid": _read_pid_from_file(_WEBUI_PID_FILE) if _WEBUI_PID_FILE.exists() else None,
+        "webui_pid": _read_pid_from_file(_WEBUI_PID_FILE) if webui_pid_exists else None,
+        "webui_pid_exists": webui_pid_exists,
+        "webui_pid_age": webui_pid_age,
+        "starting_stale": starting_stale,
     }
 
 
-def _auto_refresh(interval_ms: int, key: str) -> None:
-    components.html(
-        f"""
-        <script>
-        const key = {json.dumps(key)};
-        const now = Date.now();
-        const last = window.sessionStorage.getItem(key);
-        if (!last || now - Number(last) > {max(interval_ms - 500, 0)}) {{
-            window.sessionStorage.setItem(key, String(now));
-            setTimeout(() => window.parent.location.reload(), {interval_ms});
-        }}
-        </script>
-        """,
-        height=0,
-    )
+def _get_fragment_refresh_interval_seconds() -> Optional[int]:
+    state = _get_daily_run_status()["state"]
+    if state in {"pending", "starting"}:
+        return 2
+    if state == "running":
+        return 4
+    return None
 
 
 def _do_stop_all() -> None:
@@ -304,6 +308,13 @@ def _render_run_control(flat: dict) -> None:
             st.rerun()
         return
 
+    if status["starting_stale"]:
+        stale_seconds = int(status["webui_pid_age"] or 0)
+        st.warning(f"⚠️ {t('rm_starting_stale').format(n=stale_seconds)}")
+        if st.button(t("rm_clear_starting_marker_btn"), key="rm_clear_starting_marker"):
+            _WEBUI_PID_FILE.unlink(missing_ok=True)
+            st.rerun()
+
     if state == "pending":
         st.info(f"⏳ {t('rm_trigger_pending')}")
     elif state == "starting":
@@ -359,10 +370,6 @@ def _render_run_control(flat: dict) -> None:
                 st.caption(t("rm_trigger_pending_short"))
             else:
                 _show_last_run_hint()
-
-    if state in {"pending", "starting", "running"}:
-        interval_ms = 2000 if state in {"pending", "starting"} else 4000
-        _auto_refresh(interval_ms, key=f"rm-auto-refresh-{state}")
 
     if run_clicked:
         if _IS_DOCKER_WEBUI:
@@ -448,6 +455,32 @@ def _render_status() -> None:
                 ):
                     f.unlink(missing_ok=True)
                     st.rerun()
+
+
+def _render_run_sections(flat: dict) -> None:
+    st.markdown(
+        f'<p class="section-title">🚀 {t("run_now_section_title")}</p>',
+        unsafe_allow_html=True,
+    )
+    _render_run_control(flat)
+
+    st.divider()
+
+    st.markdown(
+        f'<p class="section-title">📊 {t("rm_status_title")}</p>',
+        unsafe_allow_html=True,
+    )
+    _render_status()
+
+
+@st.fragment(run_every=2)
+def _render_live_run_panel_fast(flat: dict) -> None:
+    _render_run_sections(flat)
+
+
+@st.fragment(run_every=4)
+def _render_live_run_panel_slow(flat: dict) -> None:
+    _render_run_sections(flat)
 
 
 # ─── 日志查看器 ──────────────────────────────────────────────────────────────
@@ -593,19 +626,13 @@ def _render_log_section() -> None:
 def render(_env_values: dict, config_values: dict) -> None:
     flat = config_values
 
-    st.markdown(
-        f'<p class="section-title">🚀 {t("run_now_section_title")}</p>',
-        unsafe_allow_html=True,
-    )
-    _render_run_control(flat)
-
-    st.divider()
-
-    st.markdown(
-        f'<p class="section-title">📊 {t("rm_status_title")}</p>',
-        unsafe_allow_html=True,
-    )
-    _render_status()
+    refresh_interval = _get_fragment_refresh_interval_seconds()
+    if refresh_interval == 2:
+        _render_live_run_panel_fast(flat)
+    elif refresh_interval == 4:
+        _render_live_run_panel_slow(flat)
+    else:
+        _render_run_sections(flat)
 
     st.divider()
 

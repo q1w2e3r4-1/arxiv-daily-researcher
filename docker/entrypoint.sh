@@ -123,10 +123,13 @@ trigger_watcher() {
             (
                 echo "$$" > "$PID_FILE"
                 echo "[trigger-watcher] Accepted run request  marker_pid=$$  log=$LOG_FILE"
+                cleanup_marker() {
+                    rm -f "$PID_FILE"
+                    echo "[trigger-watcher] PID marker cleared  marker_pid=$$"
+                }
+                trap cleanup_marker EXIT
                 cd /app
                 "${CMD[@]}" >> "$LOG_FILE" 2>&1
-                rm -f "$PID_FILE"
-                echo "[trigger-watcher] PID marker cleared  marker_pid=$$"
             ) &
         fi
         sleep 5

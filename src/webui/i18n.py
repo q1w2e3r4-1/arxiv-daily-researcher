@@ -787,9 +787,14 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Trigger file has been pending for {n}s without being consumed. The researcher container may not be running. Please check and clear it.",
     },
     "rm_clear_trigger_btn": {"zh": "🗑 清除触发文件", "en": "🗑 Clear Trigger File"},
+    "rm_starting_stale": {
+        "zh": "启动标记已保留 {n} 秒但未进入运行状态，可能上次任务已提前失败。可清理该标记后重新发起任务。",
+        "en": "The starting marker has remained for {n}s without entering the running state. The previous task may have failed early. Clear the marker and try again.",
+    },
+    "rm_clear_starting_marker_btn": {"zh": "🧹 清理启动标记", "en": "🧹 Clear Starting Marker"},
     "rm_trigger_sent_short": {
-        "zh": "已发送运行请求，页面将自动刷新状态",
-        "en": "Run request sent. The page will refresh automatically",
+        "zh": "已发送运行请求，状态区将自动更新",
+        "en": "Run request sent. The status section will update automatically",
     },
     "rm_stop_disabled_docker": {
         "zh": "独立 WebUI 容器无法可靠停止主研究容器中的进程，请到主容器或宿主机侧操作。",
