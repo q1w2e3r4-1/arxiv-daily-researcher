@@ -172,7 +172,7 @@ class ArxivSource(BasePaperSource):
             )
 
             # 添加重试机制
-            max_retries = 3
+            max_retries = 8
             retry_count = 0
             base_wait_time = 60
             domain_failed = False
@@ -277,7 +277,7 @@ class ArxivSource(BasePaperSource):
                     elif "429" in error_msg or "Too Many Requests" in error_msg:
                         retry_count += 1
                         if retry_count <= max_retries:
-                            wait_time = base_wait_time * (2 ** (retry_count - 1))
+                            wait_time = min(base_wait_time * (2 ** (retry_count - 1)), 180)
                             logger.warning(f"    遇到速率限制，等待 {wait_time} 秒后重试...")
                             time.sleep(wait_time)
                         else:
