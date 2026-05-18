@@ -308,7 +308,7 @@ def _render_run_control(flat: dict) -> None:
             st.rerun()
         return
 
-    if status["starting_stale"]:
+    if status["starting_stale"] and not status["lock_exists"]:
         stale_seconds = int(status["webui_pid_age"] or 0)
         st.warning(f"⚠️ {t('rm_starting_stale').format(n=stale_seconds)}")
         if st.button(t("rm_clear_starting_marker_btn"), key="rm_clear_starting_marker"):

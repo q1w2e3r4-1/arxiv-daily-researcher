@@ -24,6 +24,8 @@ ALL_DATA_SOURCES = [
     "new_journal_of_physics",
 ]
 
+DEFAULT_ARXIV_CATEGORIES = ["cs.LG", "cs.AI", "cs.DC", "cs.AR", "cs.NI", "cs.SE"]
+
 # Common ArXiv categories
 ARXIV_CATEGORIES = [
     "quant-ph",
@@ -42,6 +44,9 @@ ARXIV_CATEGORIES = [
     "physics.comp-ph",
     "cs.AI",
     "cs.LG",
+    "cs.DC",
+    "cs.AR",
+    "cs.NI",
     "cs.CL",
     "cs.CV",
     "cs.CR",
@@ -127,7 +132,7 @@ def render(_env_values: dict, config_values: dict):
     )
     st.markdown(f'<p class="hint-text">{t("arxiv_domains_hint")}</p>', unsafe_allow_html=True)
 
-    current_domains = flat.get("domains", ["quant-ph"])
+    current_domains = flat.get("domains", DEFAULT_ARXIV_CATEGORIES)
 
     st.multiselect(
         t("select_arxiv_cats"),
@@ -152,7 +157,7 @@ def collect(_env_values: dict, _config_values: dict) -> dict:
         enabled = ["arxiv"]
 
     # Collect domains
-    domains = list(st.session_state.get("arxiv_domains", ["quant-ph"]))
+    domains = list(st.session_state.get("arxiv_domains", DEFAULT_ARXIV_CATEGORIES))
     custom = st.session_state.get("custom_domains", "")
     if custom:
         domains.extend(d.strip() for d in custom.split(",") if d.strip())
