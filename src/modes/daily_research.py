@@ -419,7 +419,11 @@ class DailyResearchPipeline:
                     use_scoring_concurrency = settings.ENABLE_CONCURRENCY and len(papers) > 1
 
                     with tqdm(
-                        total=len(papers), desc=f"📊 [{source}] 评分", unit="篇", ncols=100
+                        total=len(papers),
+                        desc=f"📊 [{source}] 评分",
+                        unit="篇",
+                        ncols=100,
+                        smoothing=0.05,
                     ) as pbar:
                         if use_scoring_concurrency:
                             logger.info(f"    使用并发模式 (workers={settings.CONCURRENCY_WORKERS})")

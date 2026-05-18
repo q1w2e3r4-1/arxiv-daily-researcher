@@ -22,6 +22,8 @@ from utils.llm_request_pool import call_chat_completion
 
 logger = logging.getLogger(__name__)
 
+_SCORE_REQUEST_TIMEOUT_SECONDS = 600
+
 
 class WeightedScoreResponse(BaseModel):
     total_score: float
@@ -137,6 +139,7 @@ class AnalysisAgent:
                     operation_label="keyword_weighted_scoring",
                     temperature=settings.CHEAP_LLM.temperature,
                     response_format={"type": "json_object"},
+                    timeout=_SCORE_REQUEST_TIMEOUT_SECONDS,
                 )
             except Exception:
                 if settings.TOKEN_TRACKING_ENABLED:
@@ -363,6 +366,7 @@ class AnalysisAgent:
                     operation_label=stage_label,
                     temperature=0,
                     response_format={"type": "json_object"},
+                    timeout=_SCORE_REQUEST_TIMEOUT_SECONDS,
                 )
                 latency = time.perf_counter() - started
                 usage = self._extract_usage(resp)
