@@ -101,7 +101,7 @@ class ArxivSource(BasePaperSource):
         """
         super().__init__("arxiv", history_dir)
         self.max_results = max_results
-        self.client = arxiv.Client(page_size=100, delay_seconds=6.0, num_retries=3)  # 避免 429 错误
+        self.client = arxiv.Client(page_size=200, delay_seconds=10.0, num_retries=5)  # 避免 429 错误
 
         # 注入代理配置到 arxiv.Client 的内部 requests.Session
         if proxy_dict:
@@ -184,9 +184,6 @@ class ArxivSource(BasePaperSource):
                     api_total = 0
                     skipped_processed = 0
                     skipped_old = 0
-                    consecutive_processed = 0
-                    # 早停阈值：连续遇到已处理论文超过此数量则认为已到达上次抓取边界
-                    early_stop_threshold = 100
 
                     with _timeout_guard(fetch_timeout_seconds):
                         for result in self.client.results(search):
@@ -209,17 +206,7 @@ class ArxivSource(BasePaperSource):
                             # 去重：跳过已处理的论文（仅对时间窗口内的论文生效）
                             if self.is_processed(paper_id):
                                 skipped_processed += 1
-                                consecutive_processed += 1
-                                # 早停：连续遇到大量已处理论文，说明已到达历史边界
-                                if consecutive_processed >= early_stop_threshold:
-                                    logger.info(
-                                        f"    连续 {early_stop_threshold} 篇已处理，已到达历史边界，停止继续获取"
-                                    )
-                                    break
                                 continue
-
-                            # 遇到新论文时重置连续计数器
-                            consecutive_processed = 0
 
                             # 去重：跳过本次已抓取的论文
                             if paper_id in all_papers:
