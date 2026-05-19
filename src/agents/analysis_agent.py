@@ -23,6 +23,7 @@ from utils.llm_request_pool import call_chat_completion
 logger = logging.getLogger(__name__)
 
 _SCORE_REQUEST_TIMEOUT_SECONDS = 600
+_DEEP_ANALYSIS_PARSE_RETRY_ATTEMPTS = 3
 
 
 class WeightedScoreResponse(BaseModel):
@@ -1090,18 +1091,28 @@ class AnalysisAgent:
 
         prompt += f"\n\n{prompts_config.get('field_output_format', '使用JSON格式输出。')}"
 
-        try:
-            content = self._call_smart_llm(prompt)
-            content = self._clean_json_string(content)
-            result = json.loads(content)
-            logger.info(f"深度分析完成 [{title[:50]}]")
-            return result
-        except Exception as e:
-            logger.error(f"深度分析失败 [{title[:50]}]: {e}")
-            import traceback
+        for attempt in range(1, _DEEP_ANALYSIS_PARSE_RETRY_ATTEMPTS + 1):
+            try:
+                content = self._call_smart_llm(prompt)
+                result = self._parse_model_json(content)
+                logger.info(f"深度分析完成 [{title[:50]}]")
+                return result
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    f"深度分析 JSON 解析失败 [{title[:50]}] (尝试 {attempt}/{_DEEP_ANALYSIS_PARSE_RETRY_ATTEMPTS}): {e}"
+                )
+                if attempt >= _DEEP_ANALYSIS_PARSE_RETRY_ATTEMPTS:
+                    logger.error(f"深度分析失败 [{title[:50]}]: {e}")
+                    import traceback
 
-            traceback.print_exc()
-            return None
+                    traceback.print_exc()
+                    return None
+            except Exception as e:
+                logger.error(f"深度分析失败 [{title[:50]}]: {e}")
+                import traceback
+
+                traceback.print_exc()
+                return None
 
     def _download_and_parse_pdf(self, pdf_url: str) -> Optional[str]:
         if settings.PDF_PARSER_MODE == "mineru":

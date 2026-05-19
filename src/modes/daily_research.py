@@ -212,6 +212,17 @@ def _submit_postscreen_tasks(
         analysis_futures[future] = {"source": source, "paper": scored}
 
 
+def _split_future_map(future_map):
+    done = {}
+    pending = {}
+    for future, payload in future_map.items():
+        if future.done():
+            done[future] = payload
+        else:
+            pending[future] = payload
+    return done, pending
+
+
 class DailyResearchPipeline:
     """
     每日研究模式流水线。
@@ -665,17 +676,61 @@ class DailyResearchPipeline:
 
                     translation_future_count = len(translation_futures)
                     analysis_future_count = len(analysis_futures)
+                    translation_done_futures, translation_pending_futures = _split_future_map(
+                        translation_futures
+                    )
+                    analysis_done_futures, analysis_pending_futures = _split_future_map(
+                        analysis_futures
+                    )
 
                     if translation_future_count:
+                        translation_completed = 0
+
+                        for future, scored in translation_done_futures.items():
+                            source = (
+                                scored.get("paper_metadata").source
+                                if scored.get("paper_metadata")
+                                else ""
+                            )
+                            try:
+                                result = future.result()
+                                scored["abstract_cn"] = result.get("abstract_cn", "")
+                                store.update_translation(
+                                    run_id,
+                                    source,
+                                    scored["paper_id"],
+                                    scored["abstract_cn"],
+                                )
+                                _finalize_paper_if_complete(
+                                    scored,
+                                    source,
+                                    run_id,
+                                    store,
+                                    search_agent,
+                                )
+                                if result.get("from_cache"):
+                                    logger.debug(f"使用缓存的翻译: {scored['title'][:30]}...")
+                                else:
+                                    logger.debug(f"翻译并缓存: {scored['title'][:30]}...")
+                            except Exception as e:
+                                store.update_last_error(source, scored["paper_id"], str(e))
+                                logger.error(f"摘要翻译异常 ({scored['title'][:30]}...): {e}")
+                            translation_completed += 1
+
                         with tqdm(
                             total=translation_future_count,
+                            initial=translation_completed,
                             desc="🌐 摘要翻译",
                             unit="篇",
                             ncols=100,
                         ) as pbar:
-                            for future in as_completed(translation_futures):
-                                scored = translation_futures[future]
-                                source = scored.get("paper_metadata").source if scored.get("paper_metadata") else ""
+                            for future in as_completed(translation_pending_futures):
+                                scored = translation_pending_futures[future]
+                                source = (
+                                    scored.get("paper_metadata").source
+                                    if scored.get("paper_metadata")
+                                    else ""
+                                )
                                 try:
                                     result = future.result()
                                     scored["abstract_cn"] = result.get("abstract_cn", "")
@@ -699,17 +754,60 @@ class DailyResearchPipeline:
                                 except Exception as e:
                                     store.update_last_error(source, scored["paper_id"], str(e))
                                     logger.error(f"摘要翻译异常 ({scored['title'][:30]}...): {e}")
+                                translation_completed += 1
                                 pbar.update(1)
 
                     if analysis_future_count:
+                        analysis_completed = 0
+
+                        for future, future_meta in analysis_done_futures.items():
+                            paper_info = future_meta["paper"]
+                            source = future_meta["source"]
+                            try:
+                                result = future.result()
+                                if result:
+                                    paper_info["analysis"] = result["analysis"]
+                                    analyses_by_source[source].append(
+                                        {
+                                            "paper_id": result["paper_id"],
+                                            "analysis": result["analysis"],
+                                        }
+                                    )
+                                    store.update_analysis(
+                                        run_id,
+                                        source,
+                                        result["paper_id"],
+                                        result["analysis"],
+                                    )
+                                    _finalize_paper_if_complete(
+                                        paper_info,
+                                        source,
+                                        run_id,
+                                        store,
+                                        search_agent,
+                                    )
+                                else:
+                                    store.update_last_error(
+                                        source,
+                                        paper_info["paper_id"],
+                                        "deep analysis returned no result",
+                                    )
+                            except Exception as e:
+                                store.update_last_error(source, paper_info["paper_id"], str(e))
+                                logger.error(
+                                    f"深度分析异常 ({paper_info['title'][:30]}...): {e}"
+                                )
+                            analysis_completed += 1
+
                         with tqdm(
                             total=analysis_future_count,
+                            initial=analysis_completed,
                             desc="🔬 深度分析",
                             unit="篇",
                             ncols=100,
                         ) as pbar:
-                            for future in as_completed(analysis_futures):
-                                future_meta = analysis_futures[future]
+                            for future in as_completed(analysis_pending_futures):
+                                future_meta = analysis_pending_futures[future]
                                 paper_info = future_meta["paper"]
                                 source = future_meta["source"]
                                 try:
@@ -755,6 +853,7 @@ class DailyResearchPipeline:
                                         f"深度分析异常 ({paper_info['title'][:30]}...): {e}"
                                     )
                                     pbar.write(f"  ✗ 异常: {paper_info['title'][:55]}...")
+                                analysis_completed += 1
                                 pbar.update(1)
             finally:
                 if postscreen_executor is not None:
