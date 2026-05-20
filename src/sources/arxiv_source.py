@@ -168,7 +168,10 @@ class ArxivSource(BasePaperSource):
             configured_limit = self.max_results if self.max_results > 0 else None
 
             search = arxiv.Search(
-                query=query, max_results=None, sort_by=arxiv.SortCriterion.SubmittedDate
+                query=query,
+                max_results=None,
+                sort_by=arxiv.SortCriterion.SubmittedDate,
+                sort_order=arxiv.SortOrder.Descending,
             )
 
             # 添加重试机制
@@ -184,6 +187,8 @@ class ArxivSource(BasePaperSource):
                     api_total = 0
                     skipped_processed = 0
                     skipped_old = 0
+                    consecutive_old = 0
+                    max_consecutive_old = 50
 
                     with _timeout_guard(fetch_timeout_seconds):
                         for result in self.client.results(search):
@@ -198,10 +203,32 @@ class ArxivSource(BasePaperSource):
                                     continue
                                 if published_day < date_from:
                                     skipped_old += 1
-                                    break
+                                    consecutive_old += 1
+                                    logger.info(
+                                        f"    跳过窗口外旧论文 #{api_total}: {paper_id} | "
+                                        f"published={published_dt.isoformat()} | date_from={date_from}"
+                                    )
+                                    if consecutive_old >= max_consecutive_old:
+                                        logger.info(
+                                            f"    已连续跳过 {consecutive_old} 篇早于起始日期的论文，停止继续获取"
+                                        )
+                                        break
+                                    continue
                             elif published_dt < cutoff_date:
                                 skipped_old += 1
-                                break
+                                consecutive_old += 1
+                                logger.info(
+                                    f"    跳过24h窗口外旧论文 #{api_total}: {paper_id} | "
+                                    f"published={published_dt.isoformat()} | cutoff={cutoff_date.isoformat()}"
+                                )
+                                if consecutive_old >= max_consecutive_old:
+                                    logger.info(
+                                        f"    已连续跳过 {consecutive_old} 篇早于24h窗口的论文，停止继续获取"
+                                    )
+                                    break
+                                continue
+                            else:
+                                consecutive_old = 0
 
                             # 去重：跳过已处理的论文（仅对时间窗口内的论文生效）
                             if self.is_processed(paper_id):
