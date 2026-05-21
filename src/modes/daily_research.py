@@ -223,6 +223,50 @@ def _split_future_map(future_map):
     return done, pending
 
 
+def _attach_manual_filter_state(
+    scored_papers_by_source: Dict[str, List[Dict[str, Any]]],
+    store: DailyResearchStore,
+) -> None:
+    for source, papers in scored_papers_by_source.items():
+        paper_ids = [
+            paper_id
+            for paper in papers
+            for paper_id in [paper.get("paper_id")]
+            if isinstance(paper_id, str) and paper_id
+        ]
+        state_by_paper_id = store.get_manual_filter_states(source, paper_ids)
+        for paper in papers:
+            paper_id = paper.get("paper_id")
+            state = state_by_paper_id.get(paper_id, {}) if isinstance(paper_id, str) else {}
+            paper["manually_filtered"] = bool(state.get("manually_filtered", False))
+            paper["manually_filtered_at"] = state.get("manually_filtered_at")
+
+
+def _filter_papers_for_report(
+    scored_papers_by_source: Dict[str, List[Dict[str, Any]]],
+    analyses_by_source: Dict[str, List[Dict[str, Any]]],
+    include_manually_filtered: bool,
+) -> tuple[Dict[str, List[Dict[str, Any]]], Dict[str, List[Dict[str, Any]]]]:
+    filtered_scored: Dict[str, List[Dict[str, Any]]] = {}
+    filtered_analyses: Dict[str, List[Dict[str, Any]]] = {}
+
+    for source, papers in scored_papers_by_source.items():
+        kept_papers = [
+            paper
+            for paper in papers
+            if include_manually_filtered or not paper.get("manually_filtered")
+        ]
+        filtered_scored[source] = kept_papers
+        kept_ids = {paper.get("paper_id") for paper in kept_papers}
+        filtered_analyses[source] = [
+            analysis
+            for analysis in analyses_by_source.get(source, [])
+            if analysis.get("paper_id") in kept_ids
+        ]
+
+    return filtered_scored, filtered_analyses
+
+
 class DailyResearchPipeline:
     """
     每日研究模式流水线。
@@ -893,11 +937,19 @@ class DailyResearchPipeline:
             # ==================== 阶段6: 生成分数据源报告 ====================
             logger.info(">>> 阶段6: 生成分数据源研究报告...")
 
+            _attach_manual_filter_state(scored_papers_by_source, store)
+            include_manually_filtered = store.get_report_include_manually_filtered()
+            report_scored_papers_by_source, report_analyses_by_source = _filter_papers_for_report(
+                scored_papers_by_source,
+                analyses_by_source,
+                include_manually_filtered,
+            )
+
             reporter = Reporter()
             report_paths = reporter.generate_reports_by_source(
-                scored_papers_by_source=scored_papers_by_source,
+                scored_papers_by_source=report_scored_papers_by_source,
                 keywords_dict=all_keywords,
-                analyses_by_source=analyses_by_source,
+                analyses_by_source=report_analyses_by_source,
                 token_usage=token_counter.get_summary() if settings.TOKEN_TRACKING_ENABLED else None,
             )
 

@@ -134,6 +134,10 @@ h2 {
     border-left-color: var(--color-pass);
 }
 
+.card.manual-filtered {
+    border-left-color: #d97706;
+}
+
 .card.fail {
     border-left-color: var(--color-fail);
 }
@@ -179,6 +183,11 @@ h2 {
 .badge.pass {
     background: var(--color-pass-bg);
     color: var(--color-pass);
+}
+
+.badge.manual-filtered {
+    background: #fef3c7;
+    color: #92400e;
 }
 
 .badge.fail {

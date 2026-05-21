@@ -46,6 +46,19 @@ SOURCE_DISPLAY_NAMES = {
 }
 
 
+def _paper_status(paper: Dict[str, Any]) -> str:
+    if paper.get("manually_filtered"):
+        return "manual_filtered"
+    if paper["score_response"].is_qualified:
+        return "pass"
+    return "fail"
+
+
+def _paper_sort_key(paper: Dict[str, Any]) -> tuple[int, float]:
+    status_rank = {"pass": 0, "manual_filtered": 1, "fail": 2}
+    return status_rank[_paper_status(paper)], -paper["score_response"].total_score
+
+
 class Reporter:
     """
     研究报告生成Agent（模块化版本）。
@@ -181,7 +194,8 @@ class Reporter:
 
         # 计算统计信息
         total_papers = len(papers)
-        qualified_count = sum(1 for p in papers if p["score_response"].is_qualified)
+        qualified_count = sum(1 for p in papers if _paper_status(p) == "pass")
+        manual_filtered_count = sum(1 for p in papers if _paper_status(p) == "manual_filtered")
         analyzed_count = len(analyses)
 
         total_weight = sum(keywords_dict.values())
@@ -191,8 +205,7 @@ class Reporter:
             else settings.calculate_passing_score(total_weight)
         )
 
-        # 按总分排序
-        sorted_papers = sorted(papers, key=lambda x: x["score_response"].total_score, reverse=True)
+        sorted_papers = sorted(papers, key=_paper_sort_key)
 
         # 获取布局配置
         layout = self.basic_template.get("layout", {})
@@ -222,7 +235,11 @@ class Reporter:
         if layout.get("show_stats_section", True):
             lines.extend(
                 self._generate_stats_section(
-                    total_papers, qualified_count, analyzed_count, has_deep_analysis
+                    total_papers,
+                    qualified_count,
+                    manual_filtered_count,
+                    analyzed_count,
+                    has_deep_analysis,
                 )
             )
 
@@ -232,7 +249,7 @@ class Reporter:
             lines.append(f"## {section_title}")
             lines.append("")
 
-            qualified_papers = [p for p in sorted_papers if p["score_response"].is_qualified]
+            qualified_papers = [p for p in sorted_papers if _paper_status(p) == "pass"]
 
             for idx, paper in enumerate(qualified_papers, 1):
                 paper_lines = self._render_paper_section(
@@ -342,7 +359,12 @@ class Reporter:
         return lines
 
     def _generate_stats_section(
-        self, total_papers: int, qualified_count: int, analyzed_count: int, has_deep_analysis: bool
+        self,
+        total_papers: int,
+        qualified_count: int,
+        manual_filtered_count: int,
+        analyzed_count: int,
+        has_deep_analysis: bool,
     ) -> List[str]:
         """生成统计汇总部分"""
         lines = []
@@ -353,8 +375,12 @@ class Reporter:
             lines.append(
                 f"- **及格论文**: {qualified_count} 篇 ({qualified_count / total_papers * 100:.1f}%)"
             )
+            lines.append(
+                f"- **人工筛除论文**: {manual_filtered_count} 篇 ({manual_filtered_count / total_papers * 100:.1f}%)"
+            )
         else:
             lines.append(f"- **及格论文**: {qualified_count} 篇")
+            lines.append(f"- **人工筛除论文**: {manual_filtered_count} 篇")
         if has_deep_analysis:
             lines.append(f"- **深度分析**: {analyzed_count} 篇")
         lines.append("")
@@ -398,11 +424,20 @@ class Reporter:
         title = paper_meta.title if paper_meta else paper.get("title", "Unknown")
 
         # 生成标题行
+        status = _paper_status(paper)
         if is_qualified_section:
             lines.append(f"### {idx}. {title[:100]}")
         else:
-            status_icon = qualified_icon if score_resp.is_qualified else unqualified_icon
-            lines.append(f"### {idx}. {status_icon} {title}")
+            if status == "manual_filtered":
+                status_icon = "🟠"
+                status_label = "MANUAL_FILTERED"
+            elif status == "pass":
+                status_icon = qualified_icon
+                status_label = "PASS"
+            else:
+                status_icon = unqualified_icon
+                status_label = "FAIL"
+            lines.append(f"### {idx}. {status_icon} [{status_label}] {title}")
         lines.append("")
 
         # 获取模块配置
@@ -512,7 +547,8 @@ class Reporter:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         total_papers = len(papers)
-        qualified_count = sum(1 for p in papers if p["score_response"].is_qualified)
+        qualified_count = sum(1 for p in papers if _paper_status(p) == "pass")
+        manual_filtered_count = sum(1 for p in papers if _paper_status(p) == "manual_filtered")
         analyzed_count = len(analyses)
 
         total_weight = sum(keywords_dict.values())
@@ -522,7 +558,7 @@ class Reporter:
             else settings.calculate_passing_score(total_weight)
         )
 
-        sorted_papers = sorted(papers, key=lambda x: x["score_response"].total_score, reverse=True)
+        sorted_papers = sorted(papers, key=_paper_sort_key)
 
         # 构建分析索引 {paper_id: analysis}
         analysis_map = {}
@@ -569,6 +605,9 @@ class Reporter:
         parts.append(
             f'<div class="stat"><div class="num">{qualified_count}</div><div class="label">Qualified</div></div>'
         )
+        parts.append(
+            f'<div class="stat"><div class="num">{manual_filtered_count}</div><div class="label">Manual Filtered</div></div>'
+        )
         if has_deep_analysis:
             parts.append(
                 f'<div class="stat"><div class="num">{analyzed_count}</div><div class="label">Analyzed</div></div>'
@@ -583,9 +622,9 @@ class Reporter:
         parts.append("<h2>Papers</h2>")
         for idx, paper in enumerate(sorted_papers, 1):
             sr = paper["score_response"]
-            is_qual = sr.is_qualified
-            cls = "pass" if is_qual else "fail"
-            badge_text = "PASS" if is_qual else "FAIL"
+            status = _paper_status(paper)
+            cls = "manual-filtered" if status == "manual_filtered" else ("pass" if status == "pass" else "fail")
+            badge_text = "MANUAL_FILTERED" if status == "manual_filtered" else ("PASS" if status == "pass" else "FAIL")
             url = paper.get("url", "")
             title = paper.get("title", "Unknown")
             paper_meta = paper.get("paper_metadata")

@@ -13,6 +13,7 @@ from typing import Any, NamedTuple, Optional
 import streamlit as st
 import streamlit.components.v1 as components
 
+from utils.daily_research_store import DailyResearchStore
 from webui.i18n import t
 
 # project root: tabs/ -> webui/ -> src/ -> project_root
@@ -350,6 +351,10 @@ def _render_preview(report: ReportFile, all_reports: dict[str, list[ReportFile]]
         st.error(f"{t('reports_load_error')}: {e}")
 
 
+def _get_store() -> DailyResearchStore:
+    return DailyResearchStore(_DAILY_RESEARCH_DB)
+
+
 def _get_db_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(_DAILY_RESEARCH_DB, timeout=30)
     conn.row_factory = sqlite3.Row
@@ -364,6 +369,7 @@ def _query_daily_window(date_from: datetime.date, date_to: datetime.date, includ
     query = """
         SELECT source, paper_id, title, published_date, url, pdf_url, doi, journal,
                is_qualified, total_score, passing_score, scoring_method,
+               manually_filtered, manually_filtered_at,
                authors_json, categories_json, abstract, abstract_cn, score_json,
                analysis_json, metadata_json
         FROM daily_papers
@@ -375,7 +381,19 @@ def _query_daily_window(date_from: datetime.date, date_to: datetime.date, includ
     params: list[Any] = [date_from.isoformat(), date_to.isoformat()]
     if not include_rejected:
         query += " AND is_qualified = 1"
-    query += " ORDER BY COALESCE(total_score, 0) DESC, published_date DESC, source ASC, paper_id ASC"
+
+    query += """
+        ORDER BY
+            CASE
+                WHEN COALESCE(manually_filtered, 0) = 1 THEN 1
+                WHEN COALESCE(is_qualified, 0) = 1 THEN 0
+                ELSE 2
+            END ASC,
+            COALESCE(total_score, 0) DESC,
+            published_date DESC,
+            source ASC,
+            paper_id ASC
+    """
 
     with _get_db_connection() as conn:
         rows = conn.execute(query, tuple(params)).fetchall()
@@ -402,6 +420,8 @@ def _query_daily_window(date_from: datetime.date, date_to: datetime.date, includ
                 "abstract_cn": (row_dict.get("abstract_cn") or "").strip(),
                 "score": score,
                 "analysis": _load_json_dict(row_dict.get("analysis_json")),
+                "manually_filtered": bool(row_dict.get("manually_filtered") or 0),
+                "manually_filtered_at": row_dict.get("manually_filtered_at"),
             }
         )
 
@@ -447,7 +467,7 @@ def _render_analysis_html(analysis: dict[str, Any]) -> str:
     if not analysis:
         return ""
 
-    parts = ["<details><summary>深度分析</summary><div class=\"analysis-content\">"]
+    parts = [f'<details><summary>{_escape(t("reports_db_analysis_expander"))}</summary><div class="analysis-content">']
     for key, value in analysis.items():
         if value in (None, "", [], {}):
             continue
@@ -477,11 +497,118 @@ def _get_visible_db_summary(paper: dict[str, Any]) -> str:
     return abstract
 
 
+def _get_db_paper_status(paper: dict[str, Any]) -> str:
+    if paper.get("manually_filtered"):
+        return "manual_filtered"
+    if bool((paper.get("score") or {}).get("is_qualified")):
+        return "pass"
+    return "fail"
+
+
+def _split_db_papers_by_status(
+    papers: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    passed = [paper for paper in papers if _get_db_paper_status(paper) == "pass"]
+    manual_filtered = [paper for paper in papers if _get_db_paper_status(paper) == "manual_filtered"]
+    failed = [paper for paper in papers if _get_db_paper_status(paper) == "fail"]
+    return passed, manual_filtered, failed
+
+
+def _render_db_summary_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        .db-summary-paper {
+            border: 1px solid #e5e7eb;
+            border-left: 6px solid #d1d5db;
+            border-radius: 12px;
+            padding: 18px;
+            margin: 0 0 18px;
+            background: #ffffff;
+        }
+        .db-summary-paper.pass {
+            border-left-color: #16a34a;
+            background: #f0fdf4;
+        }
+        .db-summary-paper.manual-filtered {
+            border-left-color: #d97706;
+            background: #fffaf0;
+        }
+        .db-summary-paper.fail {
+            border-left-color: #dc2626;
+            background: #fffaf9;
+        }
+        .db-summary-paper h3 {
+            margin: 0 0 12px;
+            font-size: 20px;
+        }
+        .db-summary-paper a {
+            text-decoration: none;
+            color: #0f766e;
+        }
+        .db-summary-paper .badge {
+            font-size: 12px;
+            font-weight: 700;
+            border-radius: 999px;
+            padding: 4px 10px;
+            white-space: nowrap;
+            vertical-align: middle;
+        }
+        .db-summary-paper .badge.pass {
+            background: #dcfce7;
+            color: #166534;
+        }
+        .db-summary-paper .badge.manual-filtered {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .db-summary-paper .badge.fail {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .db-summary-paper .module {
+            margin-top: 12px;
+        }
+        .db-summary-paper .module-label {
+            font-weight: 700;
+            margin-bottom: 6px;
+            color: #111827;
+        }
+        .db-summary-paper .meta-row {
+            margin: 4px 0;
+            color: #374151;
+        }
+        .db-summary-paper .score {
+            font-weight: 700;
+        }
+        .db-summary-paper blockquote {
+            margin: 8px 0 0;
+            padding: 10px 14px;
+            border-left: 4px solid #9ca3af;
+            background: #f9fafb;
+            white-space: pre-wrap;
+        }
+        .db-summary-paper .analysis-content {
+            margin-top: 8px;
+        }
+        .db-summary-paper details {
+            margin-top: 8px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_db_paper_html(idx: int, paper: dict[str, Any]) -> str:
     score = paper["score"]
-    is_qualified = bool(score.get("is_qualified"))
-    cls = "pass" if is_qualified else "fail"
-    badge_text = "PASS" if is_qualified else "FAIL"
+    status = _get_db_paper_status(paper)
+    cls = "manual-filtered" if status == "manual_filtered" else ("pass" if status == "pass" else "fail")
+    badge_text = (
+        t("reports_db_status_manual_filtered")
+        if status == "manual_filtered"
+        else (t("reports_db_status_pass") if status == "pass" else t("reports_db_status_fail"))
+    )
     title_html = _escape(paper["title"])
     url = paper.get("url") or ""
     if url:
@@ -502,6 +629,14 @@ def _render_db_paper_html(idx: int, paper: dict[str, Any]) -> str:
         )
     if paper.get("doi"):
         metadata_rows.append(f'<div class="meta-row"><strong>DOI</strong>: {_escape(paper["doi"])}</div>')
+    if paper.get("categories"):
+        metadata_rows.append(
+            f'<div class="meta-row"><strong>{_escape(t("reports_db_categories"))}</strong>: {_escape(", ".join(paper["categories"]))}</div>'
+        )
+    if paper.get("manually_filtered_at"):
+        metadata_rows.append(
+            f'<div class="meta-row"><strong>{_escape(t("reports_db_manual_filtered_at"))}</strong>: {_escape(paper["manually_filtered_at"])}</div>'
+        )
 
     model_scores = ""
     judgments = score.get("model_judgments") or []
@@ -514,8 +649,8 @@ def _render_db_paper_html(idx: int, paper: dict[str, Any]) -> str:
     analysis_html = _render_analysis_html(paper.get("analysis") or {})
 
     parts = [
-        f'<div class="paper {cls}">',
-        f'<h3>{title_html} <span class="badge {cls}">{badge_text}</span></h3>',
+        f'<div class="db-summary-paper {cls}">',
+        f'<h3>{title_html} <span class="badge {cls}">{_escape(badge_text)}</span></h3>',
         '<div class="module">',
         *metadata_rows,
         '</div>',
@@ -524,7 +659,7 @@ def _render_db_paper_html(idx: int, paper: dict[str, Any]) -> str:
     if summary:
         parts.extend([
             '<div class="module">',
-            '<div class="module-label">摘要</div>',
+            f'<div class="module-label">{_escape(t("reports_db_summary_label"))}</div>',
             f'<blockquote>{_escape(summary)}</blockquote>',
             '</div>',
         ])
@@ -550,68 +685,33 @@ def _render_db_paper_html(idx: int, paper: dict[str, Any]) -> str:
     return "".join(parts)
 
 
-def _render_db_window_html(title: str, papers: list[dict[str, Any]]) -> str:
-    qualified_papers = [p for p in papers if p["score"].get("is_qualified")]
-    analyzed_count = sum(1 for p in papers if p.get("analysis"))
-    pass_rate = (len(qualified_papers) / len(papers) * 100) if papers else 0
+def _render_db_paper_card(idx: int, paper: dict[str, Any]) -> None:
+    card_col, toggle_col = st.columns([7, 1.2], vertical_alignment="top")
+    with card_col:
+        st.markdown(_render_db_paper_html(idx, paper), unsafe_allow_html=True)
+    with toggle_col:
+        toggle_key = f"reports_db_manual_filter_{paper['source']}_{paper['paper_id']}"
+        new_manual_filtered = st.toggle(
+            t("reports_db_manual_filter_toggle"),
+            value=bool(paper.get("manually_filtered")),
+            key=toggle_key,
+        )
+        if new_manual_filtered != bool(paper.get("manually_filtered")):
+            _get_store().set_manual_filter(paper["source"], paper["paper_id"], new_manual_filtered)
+            _query_daily_window.clear()
+            st.rerun()
 
-    parts = [
-        "<!DOCTYPE html>",
-        '<html lang="zh-CN"><head>',
-        '<meta charset="UTF-8">',
-        '<meta name="viewport" content="width=device-width,initial-scale=1">',
-        f"<title>{_escape(title)}</title>",
-        "<style>"
-        "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:20px;color:#111827;background:#ffffff;line-height:1.7;}"
-        "h1{margin:0 0 8px;font-size:28px;}"
-        "h2{margin:28px 0 14px;font-size:22px;border-bottom:1px solid #e5e7eb;padding-bottom:8px;}"
-        "h3{margin:0 0 12px;font-size:20px;}"
-        ".muted{color:#6b7280;}"
-        ".stats-bar{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0 24px;}"
-        ".stat{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:12px 16px;min-width:110px;}"
-        ".num{font-size:28px;font-weight:700;}"
-        ".label{font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;}"
-        ".paper{border:1px solid #e5e7eb;border-left:6px solid #d1d5db;border-radius:12px;padding:18px;margin:0 0 18px;background:#ffffff;}"
-        ".paper.pass{border-left-color:#16a34a;background:#f0fdf4;}"
-        ".paper.fail{border-left-color:#dc2626;background:#fffaf9;}"
-        ".badge{font-size:12px;font-weight:700;border-radius:999px;padding:4px 10px;white-space:nowrap;vertical-align:middle;}"
-        ".badge.pass{background:#dcfce7;color:#166534;}"
-        ".badge.fail{background:#fee2e2;color:#991b1b;}"
-        ".module{margin-top:12px;}"
-        ".module-label{font-weight:700;margin-bottom:6px;color:#111827;}"
-        ".meta-row{margin:4px 0;color:#374151;}"
-        ".score{font-weight:700;}"
-        "blockquote{margin:8px 0 0;padding:10px 14px;border-left:4px solid #9ca3af;background:#f9fafb;white-space:pre-wrap;}"
-        ".analysis-content{margin-top:8px;}"
-        "details{margin-top:8px;}"
-        "a{text-decoration:none;color:#0f766e;}"
-        "</style>",
-        "</head><body>",
-        f"<h1>{_escape(title)}</h1>",
-        f'<p class="muted">生成时间: {_escape(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))}</p>',
-        '<div class="stats-bar">',
-        f'<div class="stat"><div class="num">{len(papers)}</div><div class="label">Total</div></div>',
-        f'<div class="stat"><div class="num">{len(qualified_papers)}</div><div class="label">Qualified</div></div>',
-        f'<div class="stat"><div class="num">{len(papers) - len(qualified_papers)}</div><div class="label">Rejected</div></div>',
-        f'<div class="stat"><div class="num">{analyzed_count}</div><div class="label">Analyzed</div></div>',
-        f'<div class="stat"><div class="num">{pass_rate:.0f}%</div><div class="label">Pass Rate</div></div>',
-        "</div>",
-    ]
 
-    if qualified_papers:
-        parts.append("<h2>⭐ 及格论文详细分析</h2>")
-        for idx, paper in enumerate(qualified_papers, 1):
-            parts.append(_render_db_paper_html(idx, paper))
-
-    parts.append("<h2>📋 所有论文列表</h2>")
-    for idx, paper in enumerate(papers, 1):
-        parts.append(_render_db_paper_html(idx, paper))
-
-    parts.append("</body></html>")
-    return "\n".join(parts)
+def _render_db_paper_section(title: str, papers: list[dict[str, Any]], icon: str, start_index: int = 1) -> None:
+    if not papers:
+        return
+    st.subheader(f"{icon} {title} ({len(papers)})")
+    for offset, paper in enumerate(papers, start=start_index):
+        _render_db_paper_card(offset, paper)
 
 
 def render_db_summary(_env_values: dict, _config_values: dict) -> None:
+    _render_db_summary_styles()
     st.markdown(
         f'<p class="section-title">🗂️ {t("reports_db_window_title")}</p>',
         unsafe_allow_html=True,
@@ -625,10 +725,11 @@ def render_db_summary(_env_values: dict, _config_values: dict) -> None:
         st.info(t("reports_db_missing"))
         return
 
+    store = _get_store()
     today = datetime.date.today()
     default_from = today - datetime.timedelta(days=6)
 
-    col_from, col_to, col_toggle = st.columns([1.2, 1.2, 1])
+    col_from, col_to, col_toggle, col_report_toggle = st.columns([1.2, 1.2, 1, 1.2])
     with col_from:
         date_from = st.date_input(
             t("reports_db_date_from"),
@@ -648,6 +749,16 @@ def render_db_summary(_env_values: dict, _config_values: dict) -> None:
             key="reports_db_include_rejected",
             help=t("reports_db_include_rejected_help"),
         )
+    with col_report_toggle:
+        report_include_manual_filtered = store.get_report_include_manually_filtered()
+        include_in_report = st.toggle(
+            t("reports_db_include_manual_filtered_in_report"),
+            value=report_include_manual_filtered,
+            key="reports_db_include_manual_filtered_in_report",
+            help=t("reports_db_include_manual_filtered_in_report_help"),
+        )
+        if include_in_report != report_include_manual_filtered:
+            store.set_report_include_manually_filtered(include_in_report)
 
     if date_from > date_to:
         st.error(t("reports_db_invalid_range"))
@@ -658,9 +769,29 @@ def render_db_summary(_env_values: dict, _config_values: dict) -> None:
         st.info(t("reports_db_empty"))
         return
 
-    title = f"{t('reports_db_summary_title_prefix')} {date_from.isoformat()} → {date_to.isoformat()}"
-    html_content = _render_db_window_html(title, papers)
-    components.html(html_content, height=800, scrolling=True)
+    passed_papers, manual_filtered_papers, failed_papers = _split_db_papers_by_status(papers)
+    analyzed_count = sum(1 for p in papers if p.get("analysis"))
+
+    metric_cols = st.columns(5)
+    metric_cols[0].metric(t("reports_db_metric_total"), len(papers))
+    metric_cols[1].metric(t("reports_db_metric_qualified"), len(passed_papers))
+    metric_cols[2].metric(t("reports_db_metric_manual_filtered"), len(manual_filtered_papers))
+    metric_cols[3].metric(t("reports_db_metric_rejected"), len(failed_papers))
+    metric_cols[4].metric(t("reports_db_metric_analyzed"), analyzed_count)
+
+    st.caption(f"{t('reports_db_summary_title_prefix')} {date_from.isoformat()} → {date_to.isoformat()}")
+
+    next_index = 1
+    _render_db_paper_section(t("reports_db_section_pass"), passed_papers, "⭐", next_index)
+    next_index += len(passed_papers)
+    _render_db_paper_section(
+        t("reports_db_section_manual_filtered"),
+        manual_filtered_papers,
+        "🟠",
+        next_index,
+    )
+    next_index += len(manual_filtered_papers)
+    _render_db_paper_section(t("reports_db_section_fail"), failed_papers, "❌", next_index)
 
 
 # ─── main render ──────────────────────────────────────────────────────────────

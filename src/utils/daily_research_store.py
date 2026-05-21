@@ -19,6 +19,8 @@ from sources.base_source import PaperMetadata
 
 logger = logging.getLogger(__name__)
 
+_REPORT_INCLUDE_MANUAL_FILTERED_KEY = "report_include_manually_filtered"
+
 
 class DailyResearchStore:
     """SQLite-backed daily research 持久化存储。"""
@@ -99,6 +101,12 @@ class DailyResearchStore:
 
                 CREATE INDEX IF NOT EXISTS idx_daily_papers_analysis_completed_at
                 ON daily_papers(analysis_completed_at);
+
+                CREATE TABLE IF NOT EXISTS daily_settings (
+                    key TEXT PRIMARY KEY,
+                    value_json TEXT,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -109,6 +117,16 @@ class DailyResearchStore:
                 conn.execute("ALTER TABLE daily_runs ADD COLUMN date_from TEXT")
             if "date_to" not in run_columns:
                 conn.execute("ALTER TABLE daily_runs ADD COLUMN date_to TEXT")
+
+            paper_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(daily_papers)").fetchall()
+            }
+            if "manually_filtered" not in paper_columns:
+                conn.execute(
+                    "ALTER TABLE daily_papers ADD COLUMN manually_filtered INTEGER NOT NULL DEFAULT 0"
+                )
+            if "manually_filtered_at" not in paper_columns:
+                conn.execute("ALTER TABLE daily_papers ADD COLUMN manually_filtered_at TEXT")
 
             conn.commit()
 
@@ -266,6 +284,8 @@ class DailyResearchStore:
             "published": paper_meta.published_date.strftime("%Y-%m-%d") if paper_meta.published_date else "N/A",
             "score_response": score_response,
             "analysis": self._json_loads(row.get("analysis_json"), None),
+            "manually_filtered": bool(row.get("manually_filtered") or 0),
+            "manually_filtered_at": row.get("manually_filtered_at"),
         }
 
     def upsert_scored_paper(self, run_id: str, source: str, scored: Dict[str, Any]) -> None:
@@ -419,6 +439,76 @@ class DailyResearchStore:
                 WHERE source = ? AND paper_id = ?
                 """,
                 (run_id, now, run_id, now, source, paper_id),
+            )
+            conn.commit()
+
+    def get_manual_filter_states(
+        self, source: str, paper_ids: list[str]
+    ) -> Dict[str, Dict[str, Any]]:
+        if not paper_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in paper_ids)
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT paper_id, manually_filtered, manually_filtered_at
+                FROM daily_papers
+                WHERE source = ? AND paper_id IN ({placeholders})
+                """,
+                (source, *paper_ids),
+            ).fetchall()
+        return {
+            row["paper_id"]: {
+                "manually_filtered": bool(row["manually_filtered"] or 0),
+                "manually_filtered_at": row["manually_filtered_at"],
+            }
+            for row in rows
+        }
+
+    def set_manual_filter(self, source: str, paper_id: str, enabled: bool) -> None:
+        now = self._utcnow_iso()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE daily_papers
+                SET manually_filtered = ?,
+                    manually_filtered_at = CASE
+                        WHEN ? THEN ?
+                        ELSE manually_filtered_at
+                    END,
+                    updated_at = ?
+                WHERE source = ? AND paper_id = ?
+                """,
+                (1 if enabled else 0, 1 if enabled else 0, now, now, source, paper_id),
+            )
+            conn.commit()
+
+    def get_report_include_manually_filtered(self) -> bool:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT value_json FROM daily_settings WHERE key = ?",
+                (_REPORT_INCLUDE_MANUAL_FILTERED_KEY,),
+            ).fetchone()
+        if not row:
+            return False
+        return bool(self._json_loads(row["value_json"], False))
+
+    def set_report_include_manually_filtered(self, enabled: bool) -> None:
+        now = self._utcnow_iso()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO daily_settings (key, value_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value_json = excluded.value_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    _REPORT_INCLUDE_MANUAL_FILTERED_KEY,
+                    self._json_dumps(bool(enabled)),
+                    now,
+                ),
             )
             conn.commit()
 
