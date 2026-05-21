@@ -588,11 +588,57 @@ def _render_db_summary_styles() -> None:
             background: #f9fafb;
             white-space: pre-wrap;
         }
-        .db-summary-paper .analysis-content {
-            margin-top: 8px;
-        }
         .db-summary-paper details {
-            margin-top: 8px;
+            margin-top: 12px;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .db-summary-paper summary {
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #2563eb;
+            padding: 8px 14px;
+            background: #f8fafc;
+            user-select: none;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .db-summary-paper summary::-webkit-details-marker {
+            display: none;
+        }
+        .db-summary-paper summary::before {
+            content: "▶";
+            font-size: 0.65em;
+            transition: transform 0.2s;
+            display: inline-block;
+        }
+        .db-summary-paper details[open] summary::before {
+            transform: rotate(90deg);
+        }
+        .db-summary-paper summary:hover {
+            color: #1d4ed8;
+        }
+        .db-summary-paper .analysis-content {
+            padding: 14px 16px;
+            font-size: 0.875rem;
+            color: #374151;
+            line-height: 1.65;
+            background: #ffffff;
+            margin-top: 0;
+        }
+        .db-summary-paper .analysis-content p {
+            margin: 6px 0;
+        }
+        .db-summary-paper .analysis-content ul {
+            margin: 6px 0 6px 20px;
+            color: #4b5563;
+        }
+        .db-summary-paper .analysis-content li {
+            margin: 3px 0;
         }
         </style>
         """,
