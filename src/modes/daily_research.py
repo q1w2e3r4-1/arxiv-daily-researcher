@@ -383,7 +383,7 @@ class DailyResearchPipeline:
             )
 
             try:
-                papers_by_source: Dict[str, List[PaperMetadata]] = search_agent.fetch_all_papers(
+                fetched_by_source: Dict[str, List[PaperMetadata]] = search_agent.fetch_all_papers(
                     days=settings.SEARCH_DAYS,
                     date_from=self.date_from,
                     date_to=self.date_to,
@@ -411,11 +411,33 @@ class DailyResearchPipeline:
                         logger.warning(f"发送错误通知失败: {ne}")
                 return fetch_fail_result
 
+            fetched_count = sum(len(papers) for papers in fetched_by_source.values())
+            registered_count = store.register_candidates(run_id, fetched_by_source)
+            papers_by_source, pending_counts = store.get_unfinished_papers(
+                enabled_sources=list(dict.fromkeys([
+                    *settings.ENABLED_SOURCES,
+                    *settings.TARGET_JOURNALS,
+                    *fetched_by_source.keys(),
+                ])),
+                default_limit=settings.MAX_RESULTS,
+                limits_by_source=settings.MAX_RESULTS_PER_SOURCE,
+                date_from=self.date_from,
+                date_to=self.date_to,
+            )
             total_papers_count = sum(len(papers) for papers in papers_by_source.values())
+            deferred_count = sum(pending_counts.values()) - total_papers_count
+            logger.info(
+                "候选论文: 本次发现 %d 篇，新登记 %d 篇，待处理 %d 篇，本轮处理 %d 篇，留待后续 %d 篇",
+                fetched_count,
+                registered_count,
+                sum(pending_counts.values()),
+                total_papers_count,
+                deferred_count,
+            )
 
             if total_papers_count == 0:
-                logger.info("未找到新论文。")
-                print("\n未找到新论文，程序退出。")
+                logger.info("未找到新的或待恢复的论文。")
+                print("\n未找到新的或待恢复的论文，程序退出。")
                 no_papers_result = RunResult(
                     run_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"), success=True
                 )
@@ -428,7 +450,7 @@ class DailyResearchPipeline:
                 return no_papers_result
 
             logger.info(
-                f"成功抓取 {total_papers_count} 篇新论文（来自 {len(papers_by_source)} 个数据源）"
+                f"本轮处理 {total_papers_count} 篇论文（本次抓取 {fetched_count} 篇，待后续处理 {deferred_count} 篇）"
             )
 
             # ==================== 阶段4: 对所有论文评分 ====================
@@ -1027,20 +1049,20 @@ class DailyResearchPipeline:
 
             run_result = RunResult(
                 run_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                total_papers_fetched=total_papers_count,
+                total_papers_fetched=fetched_count,
                 top_papers=top_papers,
             )
 
             for source, scored_papers in scored_papers_by_source.items():
                 source_qualified = sum(1 for p in scored_papers if p["score_response"].is_qualified)
                 source_analyzed = len(analyses_by_source.get(source, []))
-                run_result.papers_by_source[source] = len(scored_papers)
+                run_result.papers_by_source[source] = len(fetched_by_source.get(source, []))
                 run_result.qualified_by_source[source] = source_qualified
                 run_result.analyzed_by_source[source] = source_analyzed
                 run_result.total_qualified += source_qualified
                 run_result.total_analyzed += source_analyzed
                 logger.info(
-                    f"  [{source}] 抓取: {len(scored_papers)} | 及格: {source_qualified} | 深度分析: {source_analyzed}"
+                    f"  [{source}] 抓取: {run_result.papers_by_source[source]} | 本轮处理: {len(scored_papers)} | 及格: {source_qualified} | 深度分析: {source_analyzed}"
                 )
 
             run_result.report_paths = {s: str(p) for s, p in report_paths.items()}
@@ -1055,7 +1077,7 @@ class DailyResearchPipeline:
             )
 
             logger.info(
-                f"  - 总计: 抓取 {total_papers_count} | 及格 {run_result.total_qualified} | 深度分析 {run_result.total_analyzed}"
+                f"  - 总计: 抓取 {fetched_count} | 本轮处理 {total_papers_count} | 待后续处理 {deferred_count} | 及格 {run_result.total_qualified} | 深度分析 {run_result.total_analyzed}"
             )
             logger.info(f"  - 报告位置: {settings.REPORTS_DIR}")
             logger.info("=" * 80)
@@ -1070,7 +1092,8 @@ class DailyResearchPipeline:
                 source_analyzed = run_result.analyzed_by_source.get(source, 0)
                 pct = (source_qualified / len(scored_papers) * 100) if scored_papers else 0
                 print(f"   [{source.upper()}]")
-                print(f"     • 抓取: {len(scored_papers)} 篇")
+                print(f"     • 抓取: {run_result.papers_by_source[source]} 篇")
+                print(f"     • 本轮处理: {len(scored_papers)} 篇")
                 print(f"     • 及格: {source_qualified} 篇 ({pct:.1f}%)")
                 if search_agent.can_download_pdf(source):
                     print(f"     • 深度分析: {source_analyzed} 篇")

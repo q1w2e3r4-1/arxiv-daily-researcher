@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 from .base_source import BasePaperSource, PaperMetadata
-from .arxiv_source import ArxivSource
+from .arxiv_source import ArxivSource, ArxivFetchError
 from .openalex_source import OpenAlexSource, JOURNAL_ISSN_MAP
 from .semantic_scholar_enricher import SemanticScholarEnricher
 
@@ -194,7 +194,11 @@ class SearchAgent:
                     papers = source.fetch_papers(days=days)
                     results[source_name] = papers
 
+            except ArxivFetchError:
+                raise
             except Exception as e:
+                if source_name == "arxiv":
+                    raise ArxivFetchError(f"ArXiv 抓取失败: {e}") from e
                 logger.error(f"[{source_name}] 抓取失败: {e}")
                 import traceback
 

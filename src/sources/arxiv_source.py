@@ -96,7 +96,7 @@ class ArxivSource(BasePaperSource):
 
         参数:
             history_dir: 历史记录存储目录
-            max_results: 每个领域最多保留的新论文数
+            max_results: 兼容旧配置；日报抓取不按篇数截断
             proxy_dict: 代理配置字典，如 {"http": "...", "https": "..."}
         """
         super().__init__("arxiv", history_dir)
@@ -159,13 +159,12 @@ class ArxivSource(BasePaperSource):
 
         for domain in domains:
             query = f"cat:{domain}"
-            if date_from and date_to:
-                query = f"({query}) AND {_build_submitted_date_filter(date_from, date_to)}"
+            query_start = date_from if date_from and date_to else cutoff_date.date()
+            query_end = date_to if date_from and date_to else datetime.now(timezone.utc).date()
+            query = f"({query}) AND {_build_submitted_date_filter(query_start, query_end)}"
             logger.info(f"  正在抓取领域 {domain}...")
 
-            # 顺序遍历最新论文，并在收集到足够的新论文后立即停止。
-            # 这样既能跨过 history 中已处理/被时间过滤的结果，又不会突破用户配置的上限。
-            configured_limit = self.max_results if self.max_results > 0 else None
+            # 扫描完整时间窗口；处理量上限在候选论文持久化后应用。
 
             search = arxiv.Search(
                 query=query,
@@ -255,12 +254,6 @@ class ArxivSource(BasePaperSource):
                             all_papers[paper_id] = metadata
                             count += 1
 
-                            if configured_limit is not None and count >= configured_limit:
-                                logger.info(
-                                    f"    已达到配置上限 {configured_limit} 篇，停止继续获取"
-                                )
-                                break
-
                     # 增强诊断日志
                     logger.info(f"    领域 {domain}: 发现 {count} 篇新论文")
                     if api_total > 0 and count == 0:
@@ -321,18 +314,11 @@ class ArxivSource(BasePaperSource):
         papers = list(all_papers.values())
         logger.info(f"[ArXiv] 总计发现 {len(papers)} 篇新论文")
 
-        # 若所有领域均因错误失败且没有抓取到任何论文，则抛出异常使上层正确报错
-        if failed_domains and len(papers) == 0:
+        # 任一领域失败意味着本次窗口没有完整扫描，不能把部分结果当作成功。
+        if failed_domains:
             domain_errors = "; ".join(f"{d}({e})" for d, e in failed_domains)
             raise ArxivFetchError(
-                f"ArXiv 抓取失败，所有领域均未能获取论文。失败领域及错误: {domain_errors}"
-            )
-        elif failed_domains:
-            # 部分领域失败但其他领域成功获取了论文，只记录警告
-            domain_errors = "; ".join(f"{d}({e})" for d, e in failed_domains)
-            logger.warning(
-                f"[ArXiv] 部分领域抓取失败（{len(failed_domains)}/{len(domains)} 个），"
-                f"但已成功获取 {len(papers)} 篇论文。失败领域: {domain_errors}"
+                f"ArXiv 抓取不完整（{len(failed_domains)}/{len(domains)} 个领域失败）: {domain_errors}"
             )
 
         return papers

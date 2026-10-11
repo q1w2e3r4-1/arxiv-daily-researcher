@@ -10,9 +10,9 @@ Daily research SQLite 持久化存储。
 import json
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from agents.analysis_agent import WeightedScoreResponse
 from sources.base_source import PaperMetadata
@@ -233,6 +233,108 @@ class DailyResearchStore:
             ).fetchone()
         return dict(row) if row else None
 
+    def register_candidates(
+        self, run_id: str, papers_by_source: Dict[str, List[PaperMetadata]]
+    ) -> int:
+        """在应用本轮处理上限前，持久化本次发现的全部候选论文。"""
+        now = self._utcnow_iso()
+        rows = []
+        for source, papers in papers_by_source.items():
+            for paper in papers:
+                metadata = paper.to_dict()
+                rows.append(
+                    (
+                        source, paper.paper_id, paper.title,
+                        metadata.get("published_date"), paper.url, paper.pdf_url,
+                        paper.doi, paper.journal, run_id, run_id, now,
+                        self._json_dumps(metadata), self._json_dumps(paper.authors),
+                        self._json_dumps(paper.categories), paper.abstract,
+                    )
+                )
+        if not rows:
+            return 0
+        with self._get_connection() as conn:
+            before = conn.total_changes
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO daily_papers (
+                    source, paper_id, title, published_date, url, pdf_url, doi, journal,
+                    first_run_id, last_run_id, updated_at, metadata_json,
+                    authors_json, categories_json, abstract
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            inserted = conn.total_changes - before
+            conn.commit()
+        return inserted
+
+    @staticmethod
+    def _paper_from_metadata(metadata: Dict[str, Any], source: str, paper_id: str) -> PaperMetadata:
+        published_raw = metadata.get("published_date")
+        published_date = datetime.fromisoformat(published_raw) if published_raw else None
+        return PaperMetadata(
+            paper_id=metadata.get("paper_id") or paper_id,
+            title=metadata.get("title", ""),
+            authors=metadata.get("authors") or [],
+            abstract=metadata.get("abstract", ""),
+            published_date=published_date,
+            url=metadata.get("url", ""),
+            source=metadata.get("source") or source,
+            pdf_url=metadata.get("pdf_url"),
+            doi=metadata.get("doi"),
+            journal=metadata.get("journal"),
+            categories=metadata.get("categories") or [],
+            semantic_scholar_tldr=metadata.get("semantic_scholar_tldr"),
+            arxiv_id=metadata.get("arxiv_id"),
+            arxiv_url=metadata.get("arxiv_url"),
+        )
+
+    def get_unfinished_papers(
+        self,
+        enabled_sources: List[str],
+        default_limit: int,
+        limits_by_source: Optional[Dict[str, int]] = None,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+    ) -> tuple[Dict[str, List[PaperMetadata]], Dict[str, int]]:
+        """优先恢复未完成阶段，再处理较早登记的候选；上限按来源计算。"""
+        if default_limit < 0:
+            raise ValueError("max_results 不能为负数")
+        selected: Dict[str, List[PaperMetadata]] = {}
+        pending_counts: Dict[str, int] = {}
+        limits_by_source = limits_by_source or {}
+        with self._get_connection() as conn:
+            for source in enabled_sources:
+                limit = int(limits_by_source.get(source, default_limit))
+                if limit < 0:
+                    raise ValueError(f"{source} 的 max_results 不能为负数")
+                where = "source = ? AND completed_at IS NULL AND metadata_json IS NOT NULL"
+                params: list[Any] = [source]
+                if date_from and date_to:
+                    where += " AND substr(published_date, 1, 10) BETWEEN ? AND ?"
+                    params.extend([date_from.isoformat(), date_to.isoformat()])
+                pending_counts[source] = conn.execute(
+                    f"SELECT COUNT(*) FROM daily_papers WHERE {where}", params
+                ).fetchone()[0]
+                rows = conn.execute(
+                    f"""
+                    SELECT paper_id, metadata_json FROM daily_papers
+                    WHERE {where}
+                    ORDER BY CASE WHEN score_json IS NOT NULL THEN 0 ELSE 1 END,
+                             updated_at ASC, published_date ASC, paper_id ASC
+                    LIMIT ?
+                    """,
+                    [*params, limit if limit > 0 else -1],
+                ).fetchall()
+                selected[source] = [
+                    self._paper_from_metadata(
+                        self._json_loads(row["metadata_json"], {}), source, row["paper_id"]
+                    )
+                    for row in rows
+                ]
+        return selected, pending_counts
+
     # 尝试从数据库中恢复论文的评分、翻译、分析结果，避免重复计算。
     def hydrate_scored_paper(self, source: str, paper_id: str) -> Optional[Dict[str, Any]]:
         row = self.get_paper_record(source, paper_id)
@@ -243,30 +345,10 @@ class DailyResearchStore:
         if not metadata_raw:
             return None
 
-        published_raw = metadata_raw.get("published_date")
-        published_date = None
-        if published_raw:
-            try:
-                published_date = datetime.fromisoformat(published_raw)
-            except ValueError:
-                published_date = None
-
-        paper_meta = PaperMetadata(
-            paper_id=metadata_raw.get("paper_id") or paper_id,
-            title=metadata_raw.get("title", ""),
-            authors=metadata_raw.get("authors") or [],
-            abstract=metadata_raw.get("abstract", ""),
-            published_date=published_date,
-            url=metadata_raw.get("url", ""),
-            source=metadata_raw.get("source") or source,
-            pdf_url=metadata_raw.get("pdf_url"),
-            doi=metadata_raw.get("doi"),
-            journal=metadata_raw.get("journal"),
-            categories=metadata_raw.get("categories") or [],
-            semantic_scholar_tldr=metadata_raw.get("semantic_scholar_tldr"),
-            arxiv_id=metadata_raw.get("arxiv_id"),
-            arxiv_url=metadata_raw.get("arxiv_url"),
-        )
+        try:
+            paper_meta = self._paper_from_metadata(metadata_raw, source, paper_id)
+        except ValueError:
+            return None
 
         score_response = WeightedScoreResponse.model_validate(
             self._json_loads(row.get("score_json"), {})

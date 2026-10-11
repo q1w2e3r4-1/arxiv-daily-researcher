@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     HISTORY_FILE: Path = DATA_DIR / "history.json"  # 已处理论文的历史记录文件
 
     # ==================== 搜索配置 ====================
-    MAX_RESULTS: int = 100  # 单次搜索的最大返回结果数
+    MAX_RESULTS: int = 100  # 每轮每个来源最多处理的论文数；抓取会扫描完整时间窗口
     SEARCH_DAYS: int = 7  # 搜索最近N天的论文
     TARGET_DOMAINS: List[str] = ["quant-ph"]  # 目标领域列表
 
@@ -209,7 +209,7 @@ class Settings(BaseSettings):
     NOTIFICATION_TOP_N: int = 5  # 通知中包含的Top-N高分论文数量
 
     # ==================== 搜索扩展 ====================
-    MAX_RESULTS_PER_SOURCE: Dict[str, int] = {}  # 按数据源单独配置max_results
+    MAX_RESULTS_PER_SOURCE: Dict[str, int] = {}  # 按来源覆盖每轮处理上限
 
     # ==================== 评分配置 ====================
     # 关键词相关度评分

@@ -298,7 +298,7 @@ def section_search(existing_config: dict) -> dict:
         raise KeyboardInterrupt
 
     max_results = questionary.text(
-        "Max results per source:",
+        "Max papers processed per source per run (excess candidates are saved):",
         default=str(flat.get("max_results", 100)),
         validate=lambda x: True if _is_positive_int(x) else "Please enter a positive integer",
         style=WIZARD_STYLE,

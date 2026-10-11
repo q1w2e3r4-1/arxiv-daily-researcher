@@ -263,16 +263,16 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     # ── search.py ────────────────────────────────────────────────────────
     "search_settings_title": {"zh": "搜索设置", "en": "Search Settings"},
     "search_settings_hint": {
-        "zh": "控制每次抓取的论文数量和时间范围。",
-        "en": "Control how many papers to fetch and the time range.",
+        "zh": "扫描完整时间范围，并限制每轮处理的论文数量。超出上限的论文会留在数据库中。",
+        "en": "Scan the full time range and limit papers processed per run. Excess papers stay in the database.",
     },
     "search_days_label": {"zh": "搜索最近 N 天", "en": "Search recent N days"},
     "search_days_help": {
         "zh": "推荐：1（每日）、7（每周）、30（每月）",
         "en": "Recommended: 1 (daily), 7 (weekly), 30 (monthly)",
     },
-    "max_results_label": {"zh": "每个数据源最大结果数", "en": "Max results per source"},
-    "max_results_help": {"zh": "推荐：50-200", "en": "Recommended: 50-200"},
+    "max_results_label": {"zh": "每轮每个数据源最多处理论文数", "en": "Max papers processed per source per run"},
+    "max_results_help": {"zh": "超出上限的候选论文会留待后续运行；推荐：25-200", "en": "Excess candidates remain for later runs; recommended: 25-200"},
     "data_sources_title": {"zh": "数据源", "en": "Data Sources"},
     "data_sources_hint": {
         "zh": "选择要监控的论文来源。",
