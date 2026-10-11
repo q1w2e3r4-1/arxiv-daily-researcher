@@ -20,6 +20,7 @@ from modes.daily_research import (  # noqa: E402
 from sources.base_source import PaperMetadata  # noqa: E402
 from utils.daily_research_errors import PaperStageError  # noqa: E402
 from utils.daily_research_fingerprints import build_stage_input_fingerprints  # noqa: E402
+from scoring_policy import MLSYS_SINGLE_MODEL_V1  # noqa: E402
 from utils.daily_research_store import DailyResearchStore  # noqa: E402
 
 
@@ -372,6 +373,25 @@ class DailyResearchStateTests(unittest.TestCase):
             with patch.object(settings, "NEGATIVE_KEYWORD_WEIGHTS", {"communication": 0.8}):
                 legacy_second = build_stage_input_fingerprints(paper, {"quantum": 1.0}, {})
         self.assertEqual(legacy_first["score"], legacy_second["score"])
+
+    def test_mlsys_strategy_fingerprint_tracks_prompt_model_and_threshold(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            template_dir = Path(temp_dir)
+            prompt_path = template_dir / "mlsys_screening_prompt.json"
+            prompt_path.write_text('{"version":"one"}', encoding="utf-8")
+            with patch.object(settings, "SCORE_STRATEGY", MLSYS_SINGLE_MODEL_V1), patch.object(
+                settings, "REPORT_TEMPLATES_DIR", template_dir
+            ), patch.object(settings, "MLSYS_SINGLE_MODEL_PASSING_SCORE", 6.0), patch.object(
+                settings.CHEAP_LLM, "model_name", "deepseek-reasoner"
+            ):
+                first = build_stage_input_fingerprints(_paper(), {"quantum": 1.0}, {})["score"]
+                prompt_path.write_text('{"version":"two"}', encoding="utf-8")
+                second = build_stage_input_fingerprints(_paper(), {"quantum": 1.0}, {})["score"]
+                with patch.object(settings, "MLSYS_SINGLE_MODEL_PASSING_SCORE", 7.0):
+                    third = build_stage_input_fingerprints(_paper(), {"quantum": 1.0}, {})["score"]
+                with patch.object(settings.CHEAP_LLM, "model_name", "other-model"):
+                    fourth = build_stage_input_fingerprints(_paper(), {"quantum": 1.0}, {})["score"]
+        self.assertEqual(len({first, second, third, fourth}), 4)
 
     def test_pipeline_limit_queues_complete_scan_before_processing_one_paper(self):
         class _KeywordAgent:

@@ -18,12 +18,14 @@ LEGACY_WEIGHTED_KEYWORD_V1 = "legacy_weighted_keyword_v1"
 CORE_RELEVANCE_V2 = "core_relevance_v2"
 LEARNED_PREFERENCE_V1 = "learned_preference_v1"
 WEIGHTED_KEYWORD_WITH_PENALTIES_V1 = "weighted_keyword_with_penalties_v1"
+MLSYS_SINGLE_MODEL_V1 = "mlsys_single_model_v1"
 SUPPORTED_SCORE_STRATEGIES = frozenset(
     {
         LEGACY_WEIGHTED_KEYWORD_V1,
         CORE_RELEVANCE_V2,
         LEARNED_PREFERENCE_V1,
         WEIGHTED_KEYWORD_WITH_PENALTIES_V1,
+        MLSYS_SINGLE_MODEL_V1,
     }
 )
 

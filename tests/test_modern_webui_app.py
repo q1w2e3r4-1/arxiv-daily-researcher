@@ -720,6 +720,8 @@ class ModernWebUIAppTests(unittest.TestCase):
             "标题、摘要、TL;DR 或关键词": "Title, abstract, TL;DR, or keyword",
             "已配置；留空则保持不变": "Configured; leave blank to keep unchanged",
             "正在读取偏好词库…": "Loading preference data…",
+            "MLSys 单模型 V1（实验）": "MLSys Single Model V1 (Experimental)",
+            "MLSys 单模型及格分（0–13）": "MLSys single-model passing score (0–13)",
         }
         for chinese, english in expected_translations.items():
             self.assertIn(f'"{chinese}": "{english}"', script)
@@ -735,6 +737,8 @@ class ModernWebUIAppTests(unittest.TestCase):
         scoring_start = script.index("async function renderScoring")
         scoring_end = script.index("function strategyDescription", scoring_start)
         self.assertIn("applyLocale(host);", script[scoring_start:scoring_end])
+        self.assertIn('value: "mlsys_single_model_v1"', script[scoring_start:scoring_end])
+        self.assertIn('key: "mlsys_single_model_passing_score"', script)
 
         preview_start = script.index("async function loadReportPreview")
         preview_end = script.index("async function renderFavorites", preview_start)

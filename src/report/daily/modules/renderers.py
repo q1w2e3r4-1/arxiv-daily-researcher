@@ -7,7 +7,13 @@
 from typing import List, Dict, Any, Optional
 from config import settings
 from utils.text_language import has_chinese_text
-from scoring_policy import qualification_threshold_for, ranking_score_for, uses_core_relevance_v2
+from scoring_policy import (
+    MLSYS_SINGLE_MODEL_V1,
+    qualification_threshold_for,
+    ranking_score_for,
+    response_strategy_id,
+    uses_core_relevance_v2,
+)
 from utils.deep_analysis_contract import (
     FULL_TEXT_TLDR_FIELD,
     analysis_source_label,
@@ -358,7 +364,16 @@ class ScoringRenderer(BaseModuleRenderer):
         # V2 makes the content qualification and post-qualification ranking
         # independently visible.  Legacy history deliberately retains its
         # original one-line total through the fallback branch.
-        if uses_core_relevance_v2(score_resp):
+        is_mlsys_single_model = response_strategy_id(score_resp) == MLSYS_SINGLE_MODEL_V1
+        if is_mlsys_single_model:
+            base_score = getattr(score_resp, "relevance_score", None)
+            bonus = getattr(score_resp, "keyword_scores", {}).get("preference_bonus", 0.0)
+            lines.append(
+                f"**MLSys 评分**: {float(base_score or 0):.1f} + 偏好加分 "
+                f"{float(bonus or 0):+.1f} = {score_resp.total_score:.1f} / "
+                f"{score_resp.passing_score:.1f} {status_icon}"
+            )
+        elif uses_core_relevance_v2(score_resp):
             relevance = getattr(score_resp, "relevance_score", 0.0)
             threshold = qualification_threshold_for(score_resp)
             lines.append(
@@ -382,7 +397,20 @@ class ScoringRenderer(BaseModuleRenderer):
             )
         lines.append("")
 
-        if show_details:
+        if show_details and is_mlsys_single_model:
+            detail_lines = []
+            if show_reasoning and score_resp.reasoning:
+                detail_lines.append(f"**评分理由**: {markdown_text(score_resp.reasoning)}")
+                detail_lines.append("")
+            if self.should_collapsible(config):
+                lines.extend(
+                    self.format_helper.wrap_collapsible(
+                        detail_lines, label, self.get_collapsible_default_open(config)
+                    )
+                )
+            else:
+                lines.extend(detail_lines)
+        elif show_details:
             detail_lines = []
 
             if fmt == "table":

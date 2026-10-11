@@ -9,7 +9,7 @@ import requests
 import fitz  # pymupdf
 from typing import Callable, Optional, Dict, Any, List, Mapping, Union
 from pathlib import Path
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
 from config import settings
@@ -40,6 +40,7 @@ from utils.deep_analysis_contract import (
 from scoring_policy import (
     CORE_RELEVANCE_V2,
     LEGACY_WEIGHTED_KEYWORD_V1,
+    MLSYS_SINGLE_MODEL_V1,
     LEARNED_PREFERENCE_V1,
     WEIGHTED_KEYWORD_WITH_PENALTIES_V1,
     compute_learned_adjustment,
@@ -144,6 +145,10 @@ class WeightedScoreResponse(BaseModel):
         tldr (str): 一句话总结论文的研究问题和结果
         extracted_keywords (List[str]): 从标题和摘要中提取的关键词
     """
+
+    # Preserve historical scorer-specific payload fields (for example old
+    # committee vote details) when loading migrated score_json records.
+    model_config = ConfigDict(extra="allow")
 
     total_score: float
     keyword_scores: Dict[str, float]
@@ -817,6 +822,8 @@ class AnalysisAgent:
             strategy_id = settings.normalized_score_strategy()
         except ValueError as exc:
             raise ScoreValidationError(str(exc)) from exc
+        if strategy_id == MLSYS_SINGLE_MODEL_V1:
+            return self._score_paper_with_mlsys_prompt(title, authors, abstract)
         max_score = _finite_number(
             settings.MAX_SCORE_PER_KEYWORD, "MAX_SCORE_PER_KEYWORD"
         )
@@ -1336,6 +1343,104 @@ class AnalysisAgent:
             # A synthetic zero score hides outages and permanently loses TLDR
             # data. Let the pipeline persist the failure and retry the stage.
             raise RuntimeError(f"论文评分失败 [{title[:50]}]: {e}") from e
+
+    def _score_paper_with_mlsys_prompt(
+        self, title: str, authors: str | List[str], abstract: str
+    ) -> WeightedScoreResponse:
+        """Score with the optional single-call MLSys screening prompt."""
+        try:
+            threshold = _finite_number(
+                settings.MLSYS_SINGLE_MODEL_PASSING_SCORE,
+                "MLSYS_SINGLE_MODEL_PASSING_SCORE",
+            )
+            if not 0 <= threshold <= 13:
+                raise ScoreValidationError(
+                    "MLSYS_SINGLE_MODEL_PASSING_SCORE 必须在 0–13 之间"
+                )
+            template = settings.load_report_template("mlsys_screening_prompt.json")
+            prompts = template.get("prompts") if isinstance(template, dict) else None
+            if not isinstance(prompts, dict):
+                raise ScoreValidationError("MLSys screening prompt 模板无效")
+            system_prompt = prompts.get("system")
+            user_template = prompts.get("user_template")
+            if not isinstance(system_prompt, str) or not system_prompt.strip():
+                raise ScoreValidationError("MLSys screening system prompt 不能为空")
+            if not isinstance(user_template, str) or not user_template.strip():
+                raise ScoreValidationError("MLSys screening user prompt 不能为空")
+            user_prompt = user_template
+            for token, value in {
+                "{title}": title,
+                "{abstract}": abstract or "",
+                "{source}": "arXiv",
+                "{categories}": "",
+            }.items():
+                user_prompt = user_prompt.replace(token, str(value))
+
+            raw = self._call_cheap_llm(user_prompt, system_prompt=system_prompt)
+            try:
+                data = json.loads(raw)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ScoreValidationError("MLSys screening 响应不是严格 JSON") from exc
+            if not isinstance(data, dict):
+                raise ScoreValidationError("MLSys screening JSON 顶层必须是对象")
+            expected_fields = {
+                "paper_type", "base_score", "preference_bonus", "final_score", "pass", "reason"
+            }
+            if set(data) != expected_fields:
+                raise ScoreValidationError("MLSys screening JSON 字段集合无效")
+            paper_type = data["paper_type"]
+            if paper_type not in {
+                "mlsys", "ml_for_systems", "ai_not_systems", "pure_systems", "borderline"
+            }:
+                raise ScoreValidationError("paper_type 无效")
+            base_score = _finite_number(data["base_score"], "base_score")
+            preference_bonus = _finite_number(data["preference_bonus"], "preference_bonus")
+            final_score = _finite_number(data["final_score"], "final_score")
+            if not 0 <= base_score <= 10:
+                raise ScoreValidationError("base_score 必须在 0–10 之间")
+            if not 0 <= preference_bonus <= 3:
+                raise ScoreValidationError("preference_bonus 必须在 0–3 之间")
+            if not math.isclose(final_score, base_score + preference_bonus, rel_tol=0, abs_tol=1e-6):
+                raise ScoreValidationError("final_score 与 base_score + preference_bonus 不一致")
+            prompt_threshold = template.get("thresholds", {}).get("passing_score", 6)
+            prompt_threshold = _finite_number(prompt_threshold, "prompt passing_score")
+            model_pass = final_score >= prompt_threshold
+            if not isinstance(data["pass"], bool) or data["pass"] is not model_pass:
+                raise ScoreValidationError("pass 与最终分数及提示词门槛不一致")
+            passed = final_score >= threshold
+            reason = data["reason"]
+            if not isinstance(reason, str) or not reason.strip():
+                raise ScoreValidationError("reason 必须是非空字符串")
+            reason = reason.strip()
+            total_score = final_score
+            return WeightedScoreResponse(
+                total_score=total_score,
+                keyword_scores={
+                    "base_score": base_score,
+                    "preference_bonus": preference_bonus,
+                },
+                author_bonus=0.0,
+                expert_authors_found=[],
+                passing_score=threshold,
+                is_qualified=passed,
+                reasoning=reason,
+                # This prompt makes one screening call and has no separate TLDR
+                # field. Reuse its explanation instead of triggering a second call.
+                tldr=reason,
+                extracted_keywords=[],
+                strategy_id=MLSYS_SINGLE_MODEL_V1,
+                relevance_score=base_score,
+                qualification_threshold=threshold,
+                ranking_score=total_score,
+                qualification_reason=f"{paper_type}: {reason}",
+                paper_type=paper_type,
+                base_score=base_score,
+                preference_bonus=preference_bonus,
+                model_pass=model_pass,
+            )
+        except Exception as exc:
+            logger.warning("MLSys prompt 评分失败，将由流水线重试 [%s]: %s", title[:50], exc)
+            raise RuntimeError(f"论文评分失败 [{title[:50]}]: {exc}") from exc
 
     # ======================================================================
     # 摘要翻译

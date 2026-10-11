@@ -956,6 +956,21 @@ class ConfigIOReliabilityTests(unittest.TestCase):
         legacy_round_trip = build_config_dict(**legacy)
         self.assertNotIn("strategy", legacy_round_trip["scoring_settings"])
 
+    def test_mlsys_single_model_threshold_round_trips_and_is_bounded(self):
+        config = build_config_dict(
+            score_strategy="mlsys_single_model_v1",
+            mlsys_single_model_passing_score=8.5,
+        )
+        self.assertEqual(
+            config["scoring_settings"]["mlsys_single_model"]["passing_score"], 8.5
+        )
+        self.assertEqual(
+            flatten_config_dict(config)["mlsys_single_model_passing_score"], 8.5
+        )
+        for invalid in (-0.1, 13.1, float("nan"), float("inf"), True, "bad"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                build_config_dict(mlsys_single_model_passing_score=invalid)
+
 
 if __name__ == "__main__":
     unittest.main()

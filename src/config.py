@@ -448,6 +448,8 @@ class Settings(BaseSettings):
     # 再乘以衰减系数，保证单个学习项的影响低于直接配置的评分关键词。
     LEARNED_WEIGHT_DAMPENING: float = 0.5
     LEARNED_TERM_WEIGHT_CAP: float = 2.0
+    # Optional single-model MLSys prompt strategy; score scale is 0–13.
+    MLSYS_SINGLE_MODEL_PASSING_SCORE: float = 6.0
 
     # 报告配置
     INCLUDE_ALL_IN_REPORT: bool = True
@@ -788,6 +790,25 @@ class Settings(BaseSettings):
                     self.LEARNED_TERM_WEIGHT_CAP = strategy_cfg.get(
                         "learned_term_weight_cap", self.LEARNED_TERM_WEIGHT_CAP
                     )
+
+                mlsys_cfg = score_cfg.get("mlsys_single_model")
+                if mlsys_cfg is not None:
+                    if not isinstance(mlsys_cfg, dict):
+                        raise ValueError("scoring_settings.mlsys_single_model 必须是对象")
+                    threshold = mlsys_cfg.get(
+                        "passing_score", self.MLSYS_SINGLE_MODEL_PASSING_SCORE
+                    )
+                    if isinstance(threshold, bool):
+                        raise ValueError("MLSys screening passing_score 必须在 0–13 之间")
+                    try:
+                        threshold = float(threshold)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(
+                            "MLSys screening passing_score 必须在 0–13 之间"
+                        ) from exc
+                    if not math.isfinite(threshold) or not 0 <= threshold <= 13:
+                        raise ValueError("MLSys screening passing_score 必须在 0–13 之间")
+                    self.MLSYS_SINGLE_MODEL_PASSING_SCORE = threshold
 
                 # 报告配置
                 self.INCLUDE_ALL_IN_REPORT = score_cfg.get("include_all_in_report", True)

@@ -848,6 +848,10 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "zh": "核心相关性 V2（推荐）",
         "en": "Core relevance V2 (Recommended)",
     },
+    "score_strategy_mlsys_single_model_v1_label": {
+        "zh": "MLSys 单模型 V1（实验）",
+        "en": "MLSys Single Model V1 (Experimental)",
+    },
     "score_strategy_legacy_weighted_keyword_v1_label": {
         "zh": "加权关键词 V1（兼容）",
         "en": "Weighted keywords V1 (Compatibility)",
@@ -863,6 +867,10 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     "score_strategy_core_relevance_v2_description": {
         "zh": "先由模型为每个关键词给出内容相关度。资格只看主关键词：按主关键词权重计算平均相关度，并且至少一个主关键词达到“强匹配”门槛；两项都满足才通过。通过后，参考关键词和收藏作者只用于排序，不能让无关论文获得资格。",
         "en": "The model scores content relevance for each keyword. Qualification uses primary keywords only: their weighted-average relevance must pass, and at least one primary keyword must reach the strong-match threshold. Both are required. After qualification, reference terms and preferred authors only affect ranking; they cannot qualify an unrelated paper.",
+    },
+    "score_strategy_mlsys_single_model_v1_description": {
+        "zh": "使用单次模型判断，为 LLM/基础模型执行基础设施论文给出 0–13 分；达到独立配置的门槛后通过。实验策略，结果取决于提示词和模型。",
+        "en": "Uses one model judgment to score LLM/foundation-model execution infrastructure papers from 0 to 13. Papers pass at the configured threshold. Experimental; results depend on the prompt and model.",
     },
     "score_strategy_legacy_weighted_keyword_v1_description": {
         "zh": "将主关键词和参考关键词的得分按权重累加，再叠加专家作者加分；总分达到“基础分 + 权重系数 × 全部关键词总权重”即通过。参考词和作者加分同时影响资格与排序，适合复现旧报告或临时回退，但可能放大非核心信号。",

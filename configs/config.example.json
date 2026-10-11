@@ -98,6 +98,9 @@
       "weight_coefficient": 2.5
     },
     "include_all_in_report": true,
+    "mlsys_single_model": {
+      "passing_score": 6.0
+    },
     "strategy": {
       // Switched back to the legacy weighted-keyword formula: it works with
       // reference-only keyword sets, while V2 requires curated primary

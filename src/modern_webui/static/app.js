@@ -83,6 +83,9 @@ const MODERN_EN_TRANSLATIONS = Object.freeze({
   "请求超时（秒）": "Request timeout (seconds)",
   "公告回看宽限（天）": "Announcement lookback grace (days)",
   "基础通过分": "Base passing score",
+  "MLSys 单模型 V1（实验）": "MLSys Single Model V1 (Experimental)",
+  "MLSys 单模型及格分（0–13）": "MLSys single-model passing score (0–13)",
+  "使用单次模型判断，为 LLM/基础模型执行基础设施论文给出 0–13 分；达到独立配置的门槛后通过。实验策略，结果取决于提示词和模型。": "Uses one model judgment to score LLM/foundation-model execution infrastructure papers from 0 to 13. Papers pass at the configured threshold. Experimental; results depend on the prompt and model.",
   "单关键词最高分": "Maximum score per keyword",
   "输出 Markdown": "Markdown report",
   "输出 HTML": "HTML report",
@@ -3159,7 +3162,7 @@ async function renderScoring(token) {
   const authorEditor = authorBonusEditor();
   const root = $("#page-root");
   const strategyFields = (value) => `${strategyDescription(value)}${strategyQualificationNotice(value)}${renderStrategyFields(value)}${legacyFormulaPreview(value)}`;
-  root.innerHTML = `${pageHeader()}${section("评价策略", `<p class="hint-text">选择论文如何获得资格，以及通过后如何排序。新配置建议使用核心相关性 V2。</p>${field({ label: "评分策略", key: "score_strategy", type: "select", choices: [{ value: "core_relevance_v2", label: "核心相关性 V2（推荐）" }, { value: "legacy_weighted_keyword_v1", label: "加权关键词 V1（兼容）" }, { value: "weighted_keyword_with_penalties_v1", label: "加权关键词＋扣分 V1" }, { value: "learned_preference_v1", label: "偏好学习 V1（个性化）" }], fallback: "core_relevance_v2" })}<div id="scoring-strategy-fields">${strategyFields(strategy)}</div>`, { icon: "🧮" })}${divider()}${renderAuthorBonus(authorEditor)}`;
+  root.innerHTML = `${pageHeader()}${section("评价策略", `<p class="hint-text">选择论文如何获得资格，以及通过后如何排序。新配置建议使用核心相关性 V2。</p>${field({ label: "评分策略", key: "score_strategy", type: "select", choices: [{ value: "core_relevance_v2", label: "核心相关性 V2（推荐）" }, { value: "mlsys_single_model_v1", label: "MLSys 单模型 V1（实验）" }, { value: "legacy_weighted_keyword_v1", label: "加权关键词 V1（兼容）" }, { value: "weighted_keyword_with_penalties_v1", label: "加权关键词＋扣分 V1" }, { value: "learned_preference_v1", label: "偏好学习 V1（个性化）" }], fallback: "core_relevance_v2" })}<div id="scoring-strategy-fields">${strategyFields(strategy)}</div>`, { icon: "🧮" })}${divider()}${renderAuthorBonus(authorEditor)}`;
   bindCommon(root);
   $('[data-field="score_strategy"]', root)?.addEventListener("change", (event) => {
     const host = $("#scoring-strategy-fields", root);
@@ -3198,6 +3201,7 @@ async function renderScoring(token) {
 function strategyDescription(strategy) {
   const descriptions = {
     core_relevance_v2: "先由模型为每个关键词给出内容相关度。资格只看主关键词：按主关键词权重计算平均相关度，并且至少一个主关键词达到“强匹配”门槛；两项都满足才通过。通过后，参考关键词和收藏作者只用于排序，不能让无关论文获得资格。",
+    mlsys_single_model_v1: "使用单次模型判断，为 LLM/基础模型执行基础设施论文给出 0–13 分；达到独立配置的门槛后通过。实验策略，结果取决于提示词和模型。",
     legacy_weighted_keyword_v1: "将主关键词和参考关键词的得分按权重累加，再叠加专家作者加分；总分达到“基础分 + 权重系数 × 全部关键词总权重”即通过。参考词和作者加分同时影响资格与排序，适合复现旧报告或临时回退，但可能放大非核心信号。",
     weighted_keyword_with_penalties_v1: "按加权关键词 V1 计算主关键词、参考关键词与作者加分，再按相关度和独立权重扣除不关注关键词。及格线仅由加分关键词权重决定。",
     learned_preference_v1: "以加权关键词 V1 为基础，再加入从喜欢/不喜欢和历史通过记录学习到的关键词、作者偏好。每个学习项先限幅再衰减，且已直接配置的关键词不会重复计算；但学习项仍会改变总分，因此也可能改变资格。适合个人化筛选，不适合严格复现基准结果。",
@@ -3218,6 +3222,7 @@ function strategyQualificationNotice(strategy) {
 function renderStrategyFields(strategy) {
   const maxKeywordScore = Math.max(1, Number(configValue("max_score_per_keyword", 10)) || 10);
   if (strategy === "core_relevance_v2") return `<div class="form-grid three">${field({ label: "核心相关性门槛", key: "core_relevance_threshold", type: "number", min: 0, max: maxKeywordScore, step: 0.5, fallback: 6 })}${field({ label: "核心词强匹配门槛", key: "core_keyword_min_score", type: "number", min: 0, max: maxKeywordScore, step: 0.5, fallback: 7 })}${field({ label: "参考词排序系数", key: "reference_ranking_weight", type: "number", min: 0, max: 5, step: 0.05, fallback: 0.25, help: "仅影响已合格论文的排序，不参与是否推荐。" })}</div>${field({ label: "每个关键词最高得分", key: "max_score_per_keyword", type: "number", min: 1, max: 100, fallback: 10 })}`;
+  if (strategy === "mlsys_single_model_v1") return field({ label: "MLSys 单模型及格分（0–13）", key: "mlsys_single_model_passing_score", type: "number", min: 0, max: 13, step: 0.5, fallback: 6 });
   if (strategy === "learned_preference_v1") return `<div class="form-grid two">${field({ label: "学习权重衰减系数", key: "learned_weight_dampening", type: "number", min: 0, max: 1, step: 0.05, fallback: 0.5 })}${field({ label: "学习单项限幅", key: "learned_term_weight_cap", type: "number", min: 0.1, max: 10, step: 0.1, fallback: 2 })}</div>${legacyStrategyFields()}<div id="learned-library"><div class="loading">正在读取偏好词库…</div></div>`;
   return legacyStrategyFields();
 }
@@ -3237,7 +3242,7 @@ function legacyFormulaMarkup(count, totalWeight, base, coefficient) {
 }
 
 function legacyFormulaPreview(strategy) {
-  if (strategy === "core_relevance_v2") return "";
+  if (strategy === "core_relevance_v2" || strategy === "mlsys_single_model_v1") return "";
   const primary = weightedEntries("primary_keyword_entries", "primary_keywords", "primary_keyword_weight", "keyword", "weight", 1);
   const count = primary.length;
   const totalWeight = primary.reduce((sum, entry) => sum + (Number.isFinite(Number(entry.weight)) ? Number(entry.weight) : 0), 0);
@@ -3251,7 +3256,7 @@ function legacyFormulaPreview(strategy) {
 }
 
 function bindLegacyFormulaPreview(root, strategy) {
-  if (strategy === "core_relevance_v2") return;
+  if (strategy === "core_relevance_v2" || strategy === "mlsys_single_model_v1") return;
   const preview = $("#legacy-formula-preview", root);
   if (!preview) return;
   const update = () => {

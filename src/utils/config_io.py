@@ -867,6 +867,7 @@ def build_config_dict(
     reference_ranking_weight: float = 0.25,
     learned_weight_dampening: float = 0.5,
     learned_term_weight_cap: float = 2.0,
+    mlsys_single_model_passing_score: float = 6.0,
     score_strategy_explicit: bool = True,
     include_all_in_report: bool = True,
     keyword_tracker_enabled: bool = True,
@@ -1345,6 +1346,19 @@ def build_config_dict(
         },
     }
 
+    # The optional MLSys single-model score uses its own 0-13 scale and gate.
+    if isinstance(mlsys_single_model_passing_score, bool):
+        raise ValueError("MLSys 单模型及格分必须是 0 到 13 之间的有限数字")
+    try:
+        mlsys_passing_score = float(mlsys_single_model_passing_score)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("MLSys 单模型及格分必须是 0 到 13 之间的有限数字") from exc
+    if not math.isfinite(mlsys_passing_score) or not 0 <= mlsys_passing_score <= 13:
+        raise ValueError("MLSys 单模型及格分必须是 0 到 13 之间的有限数字")
+    config["scoring_settings"]["mlsys_single_model"] = {
+        "passing_score": mlsys_passing_score,
+    }
+
     # Preserve a pre-V2 configuration's missing strategy on a UI/wizard
     # round-trip.  The absence intentionally means legacy compatibility; do
     # not silently flip an established installation to V2 merely by saving.
@@ -1571,6 +1585,12 @@ def flatten_config_dict(config: Dict[str, Any]) -> Dict[str, Any]:
     ps = sc.get("passing_score_formula", {})
     flat["passing_score_base"] = ps.get("base_score", 5.0)
     flat["passing_score_weight_coefficient"] = ps.get("weight_coefficient", 3.0)
+    mlsys_single_model = sc.get("mlsys_single_model", {})
+    if not isinstance(mlsys_single_model, dict):
+        mlsys_single_model = {}
+    flat["mlsys_single_model_passing_score"] = mlsys_single_model.get(
+        "passing_score", 6.0
+    )
     strategy = sc.get("strategy")
     if isinstance(strategy, dict):
         flat["score_strategy_explicit"] = True

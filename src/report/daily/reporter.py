@@ -23,9 +23,11 @@ from config import settings
 from scoring_policy import (
     CORE_RELEVANCE_V2,
     LEARNED_PREFERENCE_V1,
+    MLSYS_SINGLE_MODEL_V1,
     WEIGHTED_KEYWORD_WITH_PENALTIES_V1,
     qualification_threshold_for,
     ranking_score_for,
+    response_strategy_id,
     uses_core_relevance_v2,
 )
 from utils.safe_markdown import markdown_table_cell, markdown_text
@@ -497,6 +499,11 @@ class Reporter:
             lines.append(
                 f"- **参考关键词排序系数**: {settings.REFERENCE_RANKING_WEIGHT:.2f}（不参与资格）"
             )
+        elif settings.normalized_score_strategy() == "mlsys_single_model_v1":
+            lines.append("- **资格策略**: `mlsys_single_model_v1`（单模型 MLSys 评分）")
+            lines.append(
+                f"- **单模型及格分**: {settings.MLSYS_SINGLE_MODEL_PASSING_SCORE:.1f} / 13"
+            )
         elif settings.normalized_score_strategy() == LEARNED_PREFERENCE_V1:
             lines.append(
                 "- **资格策略**: `learned_preference_v1`（v1 加权判定 + 学习偏好修正）"
@@ -526,7 +533,7 @@ class Reporter:
                 f"- **及格分公式**: {settings.PASSING_SCORE_BASE} + {settings.PASSING_SCORE_WEIGHT_COEFFICIENT} × 总权重"
             )
             lines.append(f"- **当前及格分**: {passing_score:.1f}")
-        if settings.ENABLE_AUTHOR_BONUS:
+        if settings.ENABLE_AUTHOR_BONUS and settings.normalized_score_strategy() != "mlsys_single_model_v1":
             configured_author_points = getattr(settings, "AUTHOR_BONUS_BY_AUTHOR", {})
             has_individual_author_points = bool(
                 getattr(settings, "AUTHOR_BONUS_BY_AUTHOR_EXPLICIT", False)
@@ -765,6 +772,11 @@ class Reporter:
                 f"Core relevance threshold: {settings.CORE_RELEVANCE_THRESHOLD:.1f} / "
                 f"{float(settings.MAX_SCORE_PER_KEYWORD):g}"
             )
+        elif settings.normalized_score_strategy() == MLSYS_SINGLE_MODEL_V1:
+            policy_label = (
+                f"MLSys single-model threshold: "
+                f"{settings.MLSYS_SINGLE_MODEL_PASSING_SCORE:.1f} / 13"
+            )
         else:
             policy_label = f"Passing score: {passing_score:.1f}"
         parts.append(f'<p class="meta">Generated: {h(timestamp)} | {h(policy_label)}</p>')
@@ -823,7 +835,15 @@ class Reporter:
             parts.append(f'<span class="badge {cls}">{badge_text}</span></div>')
 
             # 分数和元数据
-            if uses_core_relevance_v2(sr):
+            if response_strategy_id(sr) == MLSYS_SINGLE_MODEL_V1:
+                base_score = getattr(sr, "relevance_score", 0.0) or 0.0
+                bonus = (getattr(sr, "keyword_scores", {}) or {}).get("preference_bonus", 0.0)
+                parts.append(
+                    '<div class="field"><span class="field-label">MLSys score:</span> '
+                    f'<span class="score">{float(base_score):.1f}</span> + preference '
+                    f'{float(bonus or 0):+.1f} = {sr.total_score:.1f} / {sr.passing_score:.1f}</div>'
+                )
+            elif uses_core_relevance_v2(sr):
                 relevance = getattr(sr, "relevance_score", 0.0)
                 ranking = ranking_score_for(sr)
                 threshold = qualification_threshold_for(sr)
@@ -923,47 +943,55 @@ class Reporter:
             if sr.keyword_scores:
                 parts.append("<details><summary>评分详情</summary>")
                 parts.append('<div class="analysis-content">')
-                parts.append(
-                    '<table style="width:100%;border-collapse:collapse;font-size:0.85em;">'
-                )
-                parts.append(
-                    '<tr style="border-bottom:2px solid var(--color-border);">'
-                    '<th style="text-align:left;padding:4px 8px;">关键词</th>'
-                    '<th style="text-align:center;padding:4px 8px;">权重</th>'
-                    '<th style="text-align:center;padding:4px 8px;">相关度</th>'
-                    '<th style="text-align:center;padding:4px 8px;">得分</th></tr>'
-                )
-                for kw, score in sr.keyword_scores.items():
-                    weight = keywords_dict.get(kw, 0)
-                    weighted = score * weight
+                if response_strategy_id(sr) == MLSYS_SINGLE_MODEL_V1:
+                    base_score = getattr(sr, "relevance_score", 0.0) or 0.0
+                    bonus = (getattr(sr, "keyword_scores", {}) or {}).get("preference_bonus", 0.0)
                     parts.append(
-                        f'<tr style="border-bottom:1px solid var(--color-border);">'
-                        f'<td style="padding:4px 8px;">{h(kw)}</td>'
-                        f'<td style="text-align:center;padding:4px 8px;">{weight:.1f}</td>'
-                        f'<td style="text-align:center;padding:4px 8px;">{score:.1f}/{max_score_label}</td>'
-                        f'<td style="text-align:center;padding:4px 8px;">{weighted:.1f}</td></tr>'
+                        f'<p>Base score: {float(base_score):.1f} / 10; '
+                        f'preference bonus: {float(bonus or 0):+.1f}.</p>'
                     )
-                for kw, score in getattr(sr, "negative_keyword_scores", {}).items():
-                    weight = getattr(sr, "negative_keyword_weights", {}).get(kw, 0)
+                else:
                     parts.append(
-                        f'<tr style="border-bottom:1px solid var(--color-border);">'
-                        f'<td style="padding:4px 8px;">不关注：{h(kw)}</td>'
-                        f'<td style="text-align:center;padding:4px 8px;">-{weight:.2f}</td>'
-                        f'<td style="text-align:center;padding:4px 8px;">{score:.1f}/{max_score_label}</td>'
-                        f'<td style="text-align:center;padding:4px 8px;">-{score * weight:.1f}</td></tr>'
+                        '<table style="width:100%;border-collapse:collapse;font-size:0.85em;">'
                     )
-                preference_bonus = getattr(sr, "author_preference_bonus", sr.author_bonus)
-                if preference_bonus > 0:
-                    experts = ", ".join(sr.expert_authors_found)
-                    author_label = "作者排序偏好" if uses_core_relevance_v2(sr) else "作者加分"
                     parts.append(
-                        f'<tr style="border-bottom:1px solid var(--color-border);">'
-                        f'<td style="padding:4px 8px;">{author_label}</td>'
-                        f'<td style="text-align:center;padding:4px 8px;">-</td>'
-                        f'<td style="text-align:center;padding:4px 8px;">+{preference_bonus:.1f}</td>'
-                        f'<td style="text-align:center;padding:4px 8px;">专家: {h(experts)}</td></tr>'
+                        '<tr style="border-bottom:2px solid var(--color-border);">'
+                        '<th style="text-align:left;padding:4px 8px;">关键词</th>'
+                        '<th style="text-align:center;padding:4px 8px;">权重</th>'
+                        '<th style="text-align:center;padding:4px 8px;">相关度</th>'
+                        '<th style="text-align:center;padding:4px 8px;">得分</th></tr>'
                     )
-                parts.append("</table>")
+                    for kw, score in sr.keyword_scores.items():
+                        weight = keywords_dict.get(kw, 0)
+                        weighted = score * weight
+                        parts.append(
+                            f'<tr style="border-bottom:1px solid var(--color-border);">'
+                            f'<td style="padding:4px 8px;">{h(kw)}</td>'
+                            f'<td style="text-align:center;padding:4px 8px;">{weight:.1f}</td>'
+                            f'<td style="text-align:center;padding:4px 8px;">{score:.1f}/{max_score_label}</td>'
+                            f'<td style="text-align:center;padding:4px 8px;">{weighted:.1f}</td></tr>'
+                        )
+                    for kw, score in getattr(sr, "negative_keyword_scores", {}).items():
+                        weight = getattr(sr, "negative_keyword_weights", {}).get(kw, 0)
+                        parts.append(
+                            f'<tr style="border-bottom:1px solid var(--color-border);">'
+                            f'<td style="padding:4px 8px;">不关注：{h(kw)}</td>'
+                            f'<td style="text-align:center;padding:4px 8px;">-{weight:.2f}</td>'
+                            f'<td style="text-align:center;padding:4px 8px;">{score:.1f}/{max_score_label}</td>'
+                            f'<td style="text-align:center;padding:4px 8px;">-{score * weight:.1f}</td></tr>'
+                        )
+                    preference_bonus = getattr(sr, "author_preference_bonus", sr.author_bonus)
+                    if preference_bonus > 0:
+                        experts = ", ".join(sr.expert_authors_found)
+                        author_label = "作者排序偏好" if uses_core_relevance_v2(sr) else "作者加分"
+                        parts.append(
+                            f'<tr style="border-bottom:1px solid var(--color-border);">'
+                            f'<td style="padding:4px 8px;">{author_label}</td>'
+                            f'<td style="text-align:center;padding:4px 8px;">-</td>'
+                            f'<td style="text-align:center;padding:4px 8px;">+{preference_bonus:.1f}</td>'
+                            f'<td style="text-align:center;padding:4px 8px;">专家: {h(experts)}</td></tr>'
+                        )
+                    parts.append("</table>")
                 if sr.reasoning:
                     parts.append(
                         f'<p style="margin-top:8px;"><strong>评分理由:</strong> {h(sr.reasoning)}</p>'

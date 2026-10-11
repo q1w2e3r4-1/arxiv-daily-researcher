@@ -2,14 +2,20 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agents.analysis_agent import AnalysisAgent, ScoreValidationError  # noqa: E402
+from agents.analysis_agent import (  # noqa: E402
+    AnalysisAgent,
+    ScoreValidationError,
+    WeightedScoreResponse,
+)
 from config import settings  # noqa: E402
 from scoring_policy import (  # noqa: E402
     CORE_RELEVANCE_V2,
+    MLSYS_SINGLE_MODEL_V1,
     WEIGHTED_KEYWORD_WITH_PENALTIES_V1,
 )
 from report.daily.modules.base_module import FormatHelper  # noqa: E402
@@ -28,6 +34,11 @@ def _score_payload(**overrides):
 
 
 class ScoringValidationTests(unittest.TestCase):
+    def setUp(self):
+        self._default_strategy = patch.object(settings, "SCORE_STRATEGY", CORE_RELEVANCE_V2)
+        self._default_strategy.start()
+        self.addCleanup(self._default_strategy.stop)
+
     def _agent_with_response(self, payload):
         agent = AnalysisAgent.__new__(AnalysisAgent)
         agent._call_cheap_llm = lambda _prompt, **_kwargs: payload
@@ -232,6 +243,29 @@ class ScoringValidationTests(unittest.TestCase):
         self.assertIn("不关注：quantum communication", "\n".join(lines))
         self.assertIn("→ -4.5", "\n".join(lines))
 
+    def test_mlsys_single_model_renderer_uses_its_own_scale(self):
+        renderer = ScoringRenderer(FormatHelper("mkdocs"))
+        response = SimpleNamespace(
+            strategy_id="mlsys_single_model_v1",
+            total_score=8.0,
+            passing_score=6.0,
+            is_qualified=True,
+            relevance_score=7.0,
+            keyword_scores={"base_score": 7.0, "preference_bonus": 1.0},
+            author_bonus=0.0,
+            expert_authors_found=[],
+            reasoning="Reusable LLM inference infrastructure.",
+        )
+        lines = renderer.render(
+            {"score_response": response, "keywords_dict": {}},
+            {"format": "list", "show_details": True, "show_reasoning": True},
+        )
+        rendered = "\n".join(lines)
+        self.assertIn("MLSys 评分", rendered)
+        self.assertIn("7.0 + 偏好加分 +1.0 = 8.0 / 6.0", rendered)
+        self.assertIn("Reusable LLM inference infrastructure.", rendered)
+        self.assertNotIn("base_score**", rendered)
+
     def test_v2_reference_keywords_cannot_lower_core_qualification(self):
         payload = _score_payload(
             keyword_scores={"core": 5.9, "reference": 10},
@@ -329,6 +363,95 @@ class ScoringValidationTests(unittest.TestCase):
                 {"format": "list", "show_details": True, "show_reasoning": False},
             )
         self.assertIn("4.0/5", "\n".join(lines))
+
+    def test_mlsys_prompt_strategy_maps_one_valid_response_to_weighted_score(self):
+        payload = json.dumps(
+            {
+                "paper_type": "mlsys",
+                "base_score": 8,
+                "preference_bonus": 2,
+                "final_score": 10,
+                "pass": True,
+                "reason": "The paper improves reusable LLM inference infrastructure.",
+            }
+        )
+        agent = self._agent_with_response(payload)
+        with patch.object(settings, "SCORE_STRATEGY", MLSYS_SINGLE_MODEL_V1), patch.object(
+            settings, "MLSYS_SINGLE_MODEL_PASSING_SCORE", 6.0
+        ):
+            result = agent.score_paper_with_keywords(
+                "title", ["Alice"], "abstract", {"unused native keyword": 1.0}
+            )
+
+        self.assertEqual(result.strategy_id, MLSYS_SINGLE_MODEL_V1)
+        self.assertEqual(result.total_score, 10)
+        self.assertEqual(result.keyword_scores, {"base_score": 8, "preference_bonus": 2})
+        self.assertTrue(result.is_qualified)
+        self.assertEqual(result.passing_score, 6.0)
+        self.assertEqual(result.reasoning, result.tldr)
+
+    def test_mlsys_configured_gate_can_differ_from_prompt_recommended_gate(self):
+        payload = json.dumps(
+            {
+                "paper_type": "mlsys", "base_score": 6, "preference_bonus": 0,
+                "final_score": 6, "pass": True, "reason": "The paper fits the task.",
+            }
+        )
+        with patch.object(settings, "SCORE_STRATEGY", MLSYS_SINGLE_MODEL_V1), patch.object(
+            settings, "MLSYS_SINGLE_MODEL_PASSING_SCORE", 7.0
+        ):
+            result = self._agent_with_response(payload).score_paper_with_keywords(
+                "title", ["Alice"], "abstract", {"unused": 1.0}
+            )
+        self.assertTrue(result.model_pass)
+        self.assertFalse(result.is_qualified)
+        self.assertEqual(result.passing_score, 7.0)
+
+    def test_mlsys_decimal_scores_allow_binary_rounding(self):
+        payload = json.dumps({
+            "paper_type": "borderline", "base_score": 5.1,
+            "preference_bonus": 0.2, "final_score": 5.3,
+            "pass": False, "reason": "The systems contribution is limited.",
+        })
+        with patch.object(settings, "SCORE_STRATEGY", MLSYS_SINGLE_MODEL_V1):
+            result = self._agent_with_response(payload).score_paper_with_keywords(
+                "title", ["Alice"], "abstract", {}
+            )
+        self.assertEqual(result.total_score, 5.3)
+        self.assertFalse(result.is_qualified)
+
+    def test_mlsys_prompt_strategy_rejects_inconsistent_or_out_of_range_json(self):
+        invalid_payloads = [
+            {"paper_type": "mlsys", "base_score": 8, "preference_bonus": 2,
+             "final_score": 9, "pass": True, "reason": "Reason."},
+            {"paper_type": "mlsys", "base_score": 11, "preference_bonus": 0,
+             "final_score": 11, "pass": True, "reason": "Reason."},
+            {"paper_type": "mlsys", "base_score": 8, "preference_bonus": 2,
+             "final_score": 10, "pass": False, "reason": "Reason."},
+            {"paper_type": "other", "base_score": 8, "preference_bonus": 2,
+             "final_score": 10, "pass": True, "reason": "Reason."},
+        ]
+        with patch.object(settings, "SCORE_STRATEGY", MLSYS_SINGLE_MODEL_V1):
+            for payload in invalid_payloads:
+                with self.subTest(payload=payload), self.assertRaisesRegex(
+                    RuntimeError, "论文评分失败"
+                ):
+                    self._agent_with_response(json.dumps(payload)).score_paper_with_keywords(
+                        "title", ["Alice"], "abstract", {"unused": 1.0}
+                    )
+
+    def test_score_response_preserves_unknown_historical_committee_fields(self):
+        response = WeightedScoreResponse(
+            total_score=7, keyword_scores={}, author_bonus=0, expert_authors_found=[],
+            passing_score=6, is_qualified=True, reasoning="historical", tldr="historical",
+            extracted_keywords=[], strategy_id="mlsys_multi_model", committee_votes={"glm": 1},
+        )
+        hydrated = WeightedScoreResponse.model_validate_json(response.model_dump_json())
+        self.assertEqual(hydrated.strategy_id, "mlsys_multi_model")
+        self.assertEqual(hydrated.committee_votes, {"glm": 1})
+        with patch.object(settings, "SCORE_STRATEGY", "mlsys_multi_model"):
+            with self.assertRaisesRegex(ValueError, "SCORE_STRATEGY"):
+                settings.normalized_score_strategy()
 
 
 if __name__ == "__main__":

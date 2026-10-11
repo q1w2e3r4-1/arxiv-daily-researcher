@@ -397,6 +397,30 @@ class ModernBackendTests(unittest.TestCase):
         self.assertEqual(saved["negative_keyword_entries"], updates["negative_keyword_entries"])
         self.assertEqual(saved["primary_keyword_entries"], current["primary_keyword_entries"])
 
+    def test_save_settings_round_trips_mlsys_single_model_threshold(self) -> None:
+        current = {
+            "primary_keyword_entries": [{"keyword": "LLM inference", "weight": 1.0}],
+            "score_strategy": "core_relevance_v2",
+            "mlsys_single_model_passing_score": 6.0,
+        }
+        updates = {
+            "score_strategy": "mlsys_single_model_v1",
+            "mlsys_single_model_passing_score": 8.0,
+        }
+        with patch.object(backend, "flat_config", return_value=current), patch.object(
+            backend, "write_config_json"
+        ) as write, patch.object(backend, "_invalidate_runtime_caches"), patch.object(
+            backend, "read_env", return_value={}
+        ), patch.object(backend, "write_env"), patch.object(
+            backend, "public_settings", return_value={}
+        ):
+            backend.save_settings(updates, {})
+
+        saved = flatten_config_dict(write.call_args.args[0])
+        self.assertEqual(saved["score_strategy"], "mlsys_single_model_v1")
+        self.assertEqual(saved["mlsys_single_model_passing_score"], 8.0)
+        self.assertEqual(saved["primary_keyword_entries"], current["primary_keyword_entries"])
+
     def test_task_records_read_the_same_trigger_protocol(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             data_dir = Path(directory)

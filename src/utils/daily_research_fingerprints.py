@@ -13,7 +13,7 @@ import json
 from typing import Any, Dict, Mapping
 
 from config import settings
-from scoring_policy import WEIGHTED_KEYWORD_WITH_PENALTIES_V1
+from scoring_policy import MLSYS_SINGLE_MODEL_V1, WEIGHTED_KEYWORD_WITH_PENALTIES_V1
 # New score audit records derive the identifier from settings for each actual
 # decision; historical audit JSON continues to carry its own fixed value.
 SCORE_PROMPT_REVISION = "daily-keyword-score-v4"
@@ -46,6 +46,15 @@ def _model_settings(model: Any, temperature: Any) -> Dict[str, Any]:
         "model_name": str(getattr(model, "model_name", "")),
         "temperature": temperature,
     }
+
+
+def _mlsys_prompt_fingerprint() -> str:
+    """Fingerprint the exact prompt file bytes used by the MLSys strategy."""
+    prompt_path = settings.REPORT_TEMPLATES_DIR / "mlsys_screening_prompt.json"
+    try:
+        return hashlib.sha256(prompt_path.read_bytes()).hexdigest()
+    except OSError:
+        return "missing"
 
 
 def _primary_keyword_entries() -> list[list[Any]]:
@@ -128,6 +137,11 @@ def build_score_audit_metadata(
         "model": _model_settings(settings.CHEAP_LLM, settings.CHEAP_LLM.temperature),
         "prompt_revision": SCORE_PROMPT_REVISION,
     }
+    if configured_score_strategy_id() == MLSYS_SINGLE_MODEL_V1:
+        policy_input["mlsys_single_model"] = {
+            "prompt_sha256": _mlsys_prompt_fingerprint(),
+            "passing_score": settings.MLSYS_SINGLE_MODEL_PASSING_SCORE,
+        }
     return {
         "schema": "daily-research-score-audit-v1",
         "strategy_id": configured_score_strategy_id(),
@@ -196,6 +210,11 @@ def build_stage_input_fingerprints(
         "model": _model_settings(settings.CHEAP_LLM, settings.CHEAP_LLM.temperature),
         "prompt_revision": SCORE_PROMPT_REVISION,
     }
+    if configured_score_strategy_id() == MLSYS_SINGLE_MODEL_V1:
+        score_payload["mlsys_single_model"] = {
+            "prompt_sha256": _mlsys_prompt_fingerprint(),
+            "passing_score": settings.MLSYS_SINGLE_MODEL_PASSING_SCORE,
+        }
 
     translation_payload = {
         "schema": "daily-research-translation-input-v1",
