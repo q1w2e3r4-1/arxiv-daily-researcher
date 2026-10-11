@@ -222,6 +222,7 @@ The repository also includes the `main.py` command-line entry point and GitHub A
 | Weighted keywords V1 | Keyword relevance × weight, plus author bonuses, is compared with a dynamic threshold. |
 | Weighted keywords with penalties | Uses the weighted keyword score and threshold, subtracting unwanted keyword relevance × its individual weight. |
 | Learned preferences V1 | Adjusts weighted scores using signals from likes, dislikes, and previously qualifying papers. |
+| MLSys single model V1 | Uses the MLSys screening prompt to produce a 0–13 score and rationale with one model. Papers pass at the configurable threshold. Intended for AI infrastructure topics. |
 
 Selecting the penalty strategy shows unwanted keyword settings on the **Keywords** page. Each penalty weight ranges from 0 to 1; a primary keyword cannot also be a penalty term.
 
@@ -247,6 +248,8 @@ The first three tasks can run while the worker is idle or during a chosen window
 Usage statistics show regular input, cached input, and output tokens by model and time. Historical report statistics can be imported; input without a recorded cache breakdown counts as regular input.
 
 Local backups take consistent SQLite snapshots with configurable retention and a daily copy limit. WebDAV can synchronize settings, reports, and databases. Migrating the entire service also requires `.env`, `runtime/`, `data/`, and customized templates.
+
+To import an older fork's SQLite database, stop writes to the old service and make a consistent copy with SQLite backup. Run `scripts/migrate_fork_sqlite.py` against the copy and a **new** database path. The tool refuses to overwrite an existing database and does not copy old report files. Check paper counts, the pending queue, and report paths before switching runtime data. Do not open the old database directly with this version.
 
 ---
 
