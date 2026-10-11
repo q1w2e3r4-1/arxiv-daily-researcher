@@ -292,6 +292,7 @@ class ArxivSource(BasePaperSource):
         page_size: Optional[int] = None,
         max_pages: Optional[int] = None,
         context: str = "",
+        progress_callback: Optional[Callable[[str, int, int], None]] = None,
     ) -> tuple[list, Dict[str, Any]]:
         """
         获取一个无数量上限的查询结果。
@@ -340,6 +341,8 @@ class ArxivSource(BasePaperSource):
                     break
                 in_window_count += 1
                 results.append(result)
+                if progress_callback is not None and api_total % configured_page_size == 0:
+                    progress_callback(context, page_count, in_window_count)
         return results, {
             "api_entries_checked": api_total,
             "pages_observed": page_count,
@@ -425,7 +428,10 @@ class ArxivSource(BasePaperSource):
         domains = normalize_arxiv_domains(domains)
 
         all_papers = {}
-        fetched_at = datetime.now(timezone.utc)
+        fetched_at = kwargs.get("fetched_at") or datetime.now(timezone.utc)
+        if fetched_at.tzinfo is None:
+            raise ValueError("fetched_at must be timezone-aware")
+        fetched_at = fetched_at.astimezone(timezone.utc)
         normal_days = max(1, int(days))
         effective_days = normal_days + self.announcement_lookback_grace_days
         cutoff_date = fetched_at - timedelta(days=effective_days)
@@ -454,6 +460,7 @@ class ArxivSource(BasePaperSource):
         logger.info("  抓取策略: 按提交时间和最后更新时间完整分页（不受 max_results 限制）")
 
         scan_receipt_callback = kwargs.get("scan_receipt_callback")
+        progress_callback = kwargs.get("progress_callback")
         domain_receipts: List[Dict[str, Any]] = []
 
         # 记录因严重错误失败的领域及其最后错误信息
@@ -526,6 +533,7 @@ class ArxivSource(BasePaperSource):
                                 else None
                             ),
                             context=domain,
+                            progress_callback=progress_callback,
                         )
                         domain_receipt["queries"][query_kind].update(query_receipt)
                         if query_receipt.get("truncated"):
