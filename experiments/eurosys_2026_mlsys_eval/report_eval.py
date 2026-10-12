@@ -326,6 +326,11 @@ def render_formal_markdown(
     stats: dict[str, Any],
 ) -> str:
     lines = []
+    historic_followup = (
+        run_dir.name == "smoke"
+        and paper_count == 138
+        and labels_manifest.get("positive_count") == 42
+    )
     lines.append(f"# EuroSys 2026 MLSys 评测汇报（{paper_count}篇正式版）")
     lines.append("")
     lines.append("## 1. 说明")
@@ -356,6 +361,11 @@ def render_formal_markdown(
         "Ground truth 说明：本次标注并不是人工逐篇精标，而是从 `Eurosys.md` 冻结出来的标签，因此本身存在噪声。尤其是 AI agent systems、NPU / edge / on-device、以及部分 AI training / deployment systems，可能被偏保守地标成负类。后文列出的复查候选可以视为可接受的标签误差来源。"
     )
     lines.append("")
+    if historic_followup:
+        lines.append(
+            "**口径变更提醒：**早期的 `Eurosys.md` 将 46 篇论文列为相关，其中包含 4 篇 `ML for Systems`；本报告的冻结标签将这 4 篇排除，正类变为 42 篇。研究目标随后进一步收窄，重点转向可复用的 LLM／基础模型执行基础设施，筛选 prompt 也随之调整。因此，不同时期的“MLSys 相关”并非始终指同一个范围。本报告的旧模型指标与后续 DeepSeek 复测指标都按上述 42 篇正类计算；标签口径的历史变化本身不能解释它们之间的两篇差距。"
+        )
+        lines.append("")
     lines.append("## 3. 单模型结果")
     lines.append("")
     lines.append(
@@ -468,11 +478,22 @@ def render_formal_markdown(
     lines.append("")
     lines.append("## 9. 总结")
     lines.append("")
-    lines.append("- 如果只选一个模型作为当前生产候选，`glm-5.1` 依然是本轮最优。")
-    lines.append("- 如果更看重“筛出可能漏标 / 误标的论文”，当前这套分阶段委员会依然很有价值。")
-    lines.append(
-        "- 当前评测结果已经足够支持：将这套 cheap-first、borderline 再交给 `glm-5.1` 复核的委员会规则接入主流程进行 daily screening，同时在汇报中注明 ground truth 不是人工金标准，存在少量系统性误标。"
-    )
+    if historic_followup:
+        lines.append("- 在这轮较早 prompt 的实验中，`glm-5.1` 是统计值最高的单模型（126/138）；这只是该实验设置下的结论。")
+    else:
+        lines.append("- 单模型指标只反映本轮 prompt、标签及后处理设置。")
+    lines.append("- 分阶段委员会有助于发现可能漏标或误标的论文。上述冻结标签并非人工逐篇精标。")
+    lines.append("")
+    if historic_followup:
+        lines.append("## 10. 后续 DeepSeek 复测的比较限制")
+        lines.append("")
+        lines.append(
+            "后续独立复测使用 `deepseek-reasoner` 对相同的 138 篇论文评分，按 42 篇正类的冻结标签得到 **124/138**（TP 41、TN 83、FP 13、FN 1），138 个响应均有效；本报告的 `glm-5.1` 为 **126/138**。DeepSeek 复测使用的是从历史提交 `ae56c48` 推定的 v1.0 prompt，旧 GLM 实际请求的 prompt 没有可靠哈希，无法确认两者使用完全相同的提示词。"
+        )
+        lines.append("")
+        lines.append(
+            "更重要的是，早期 prompt 覆盖较宽的 AI/ML 系统工作，后续研究目标和筛选标准更聚焦于 LLM／基础模型执行基础设施；ground truth 也经历了从原始 46 篇相关论文到排除 4 篇 `ML for Systems` 后 42 篇正类的修订。虽然这里展示的两个正确数已按同一份 42 篇正类标签统计，现有数据仍不能构成严格的同 prompt、同研究定义的模型能力比较。**DeepSeek 少答对 2 篇，不能据此推断它的模型能力较弱**；同样也不能由此证明它更强。要比较模型能力，需先复核有争议的标签，再用固定的最新筛选标准和同一 prompt 重新评测。"
+        )
     return "\n".join(lines) + "\n"
 
 
