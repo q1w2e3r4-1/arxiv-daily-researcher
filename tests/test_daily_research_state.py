@@ -491,15 +491,18 @@ class DailyResearchStateTests(unittest.TestCase):
                     patch("modes.daily_research.after_report_sync_maintenance_entry", return_value=None)
                 )
                 result = DailyResearchPipeline().run()
+                second_result = DailyResearchPipeline().run()
 
             store = DailyResearchStore(db_path)
             pending, pending_count = store.select_pending_papers(["arxiv"], limit=0)
 
             self.assertTrue(result.success)
             self.assertEqual(result.total_papers_fetched, 1)
-            self.assertEqual(_Reporter.processed_counts, [1])
-            self.assertEqual(pending_count, 2)
-            self.assertEqual(sum(len(items) for items in pending.values()), 2)
+            self.assertTrue(second_result.success)
+            self.assertEqual(second_result.total_papers_fetched, 1)
+            self.assertEqual(_Reporter.processed_counts, [1, 1])
+            self.assertEqual(pending_count, 1)
+            self.assertEqual(sum(len(items) for items in pending.values()), 1)
             self.assertEqual(
                 len(store.get_version_records("arxiv", "2501.12340"))
                 + len(store.get_version_records("arxiv", "2501.12341"))
