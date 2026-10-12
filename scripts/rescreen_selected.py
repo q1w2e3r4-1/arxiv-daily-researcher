@@ -90,6 +90,41 @@ def freeze(source_db: Path) -> None:
     print(f"已冻结 {len(rows)} 篇；旧评分保持只读；输出：{DB}", flush=True)
 
 
+def freeze_preview(source_db: Path) -> None:
+    """Freeze the exact candidates in a prior preview without changing it."""
+    if DB.exists():
+        with connect(DB) as existing:
+            initialize(existing)
+            if existing.execute("SELECT 1 FROM experiment WHERE id=1").fetchone():
+                raise RuntimeError("复评样本已冻结；不会覆盖已有结果")
+    prompt_bytes = PROMPT.read_bytes()
+    prompt = json.loads(prompt_bytes)
+    source = sqlite3.connect(f"file:{source_db.resolve()}?mode=ro", uri=True)
+    try:
+        job = source.execute("SELECT model, source_window_end FROM experiment WHERE id=1").fetchone()
+        if job is None:
+            raise RuntimeError("预览数据库没有任务元数据")
+        rows = source.execute("""
+            SELECT paper_id, metadata_json, old_score_json FROM papers
+            ORDER BY paper_id
+        """).fetchall()
+    finally:
+        source.close()
+    if not rows:
+        raise RuntimeError("预览数据库没有论文")
+    with connect(DB) as conn:
+        initialize(conn)
+        with conn:
+            conn.execute("INSERT INTO experiment VALUES (1, ?, ?, ?, ?, ?)", (
+                hashlib.sha256(prompt_bytes).hexdigest(), prompt["version"],
+                job[0], job[1], utc_now(),
+            ))
+            conn.executemany(
+                "INSERT INTO papers(paper_id, metadata_json, old_score_json) VALUES (?, ?, ?)", rows
+            )
+    print(f"已冻结预览候选 {len(rows)} 篇；输出：{DB}", flush=True)
+
+
 def check_experiment(conn: sqlite3.Connection) -> sqlite3.Row:
     row = conn.execute("SELECT * FROM experiment WHERE id=1").fetchone()
     if row is None:
@@ -211,14 +246,26 @@ def report(conn: sqlite3.Connection) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("freeze", "run", "status", "report"))
+    parser.add_argument("command", choices=("freeze", "freeze-preview", "run", "status", "report"))
     parser.add_argument("--source-db", type=Path)
+    parser.add_argument("--output-dir", type=Path, help="独立存放本轮复评结果的目录")
     parser.add_argument("--limit", type=int, default=0)
     args = parser.parse_args()
+    if args.output_dir is not None:
+        global OUTPUT, DB, REPORT, LOCK
+        OUTPUT = args.output_dir.resolve()
+        DB = OUTPUT / "rescreen.sqlite"
+        REPORT = OUTPUT / "comparison.md"
+        LOCK = OUTPUT / "rescreen.lock"
     if args.command == "freeze":
         if args.source_db is None:
             parser.error("freeze 需要 --source-db")
         freeze(args.source_db)
+        return 0
+    if args.command == "freeze-preview":
+        if args.source_db is None:
+            parser.error("freeze-preview 需要 --source-db")
+        freeze_preview(args.source_db)
         return 0
     with connect(DB) as conn:
         if args.command == "run":
