@@ -591,6 +591,14 @@ async def favorites_get(request: Request) -> JSONResponse:
         raise _safe_error(exc) from exc
 
 
+async def trash_get(request: Request) -> JSONResponse:
+    _require_session(request)
+    try:
+        return JSONResponse(await _blocking_call(backend.trash_papers, dict(request.query_params)))
+    except Exception as exc:
+        raise _safe_error(exc) from exc
+
+
 async def favorites_collect(request: Request) -> JSONResponse:
     _require_session(request)
     try:
@@ -1048,6 +1056,7 @@ app = Starlette(
         Route("/api/history/supplement-reports/migrate", migrate_supplement_reports, methods=["POST"]),
         Route("/api/papers", papers_get, methods=["GET"]),
         Route("/api/favorites", favorites_get, methods=["GET"]),
+        Route("/api/trash", trash_get, methods=["GET"]),
         Route("/api/favorites/collect", favorites_collect, methods=["POST"]),
         Route("/api/preferences", preference_put, methods=["PUT"]),
         Route("/api/learned-preferences", learned_get, methods=["GET"]),

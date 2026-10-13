@@ -82,6 +82,28 @@ class ModernWebUIAppTests(unittest.TestCase):
         self.addCleanup(self.write_env.stop)
         self.addCleanup(self.client.close)
 
+    def test_window_search_dismiss_trash_restore_round_trip(self) -> None:
+        from utils.daily_research_store import DailyResearchStore
+        from test_paper_search import _seed_paper
+        with tempfile.TemporaryDirectory() as directory:
+            store = DailyResearchStore(Path(directory) / "isolated.db")
+            _seed_paper(store, paper_id="demo", title="Demo inference optimization",
+                        authors=[], completed_at="2026-08-10T08:00:00", total_score=8, qualified=True)
+            self.env["WEBUI_AUTH_ENABLED"] = "false"
+            with patch.object(modern_app.backend, "open_store", return_value=store):
+                query = "/api/papers?completed_from=2026-08-01&completed_to=2026-08-14&qualified_only=true"
+                self.assertEqual(self.client.get(query).json()["total"], 1)
+                payload = {"source": "arxiv", "paper_id": "demo", "title": "Demo", "preference": "dislike"}
+                self.assertEqual(self.client.put("/api/preferences", json=payload).status_code, 200)
+                self.assertEqual(self.client.get(query).json()["total"], 0)
+                trash = self.client.get("/api/trash?limit=1&offset=0").json()
+                self.assertEqual(trash["total"], 1)
+                self.assertEqual(trash["items"][0]["paper_id"], "demo")
+                payload.update(preference="none", restore_entity=True)
+                self.assertEqual(self.client.put("/api/preferences", json=payload).status_code, 200)
+                self.assertEqual(self.client.get(query).json()["total"], 1)
+                self.assertEqual(self.client.get("/api/trash").json()["total"], 0)
+
     def test_health_is_public_and_protected_settings_require_a_session(self) -> None:
         health = self.client.get("/api/health")
         self.assertEqual(health.status_code, 200)

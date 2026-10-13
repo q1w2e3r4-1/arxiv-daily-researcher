@@ -171,6 +171,10 @@ docker compose exec arxiv-daily-researcher python src/utils/setup_wizard.py
     <td align="center" width="50%"><a href="assets/webui_prompt_v1_9_zh.png"><img src="assets/webui_prompt_v1_9_zh.png" alt="MLSys screening prompt in Chinese" width="100%" /></a><br /><b>筛选 Prompt</b><br /><sub>系统规则与论文输入模板</sub></td>
     <td align="center" width="50%"><a href="assets/webui_prompt_v1_9_en.png"><img src="assets/webui_prompt_v1_9_en.png" alt="MLSys screening prompt in English" width="100%" /></a><br /><b>英文界面</b><br /><sub>编辑、保存与恢复默认</sub></td>
   </tr>
+  <tr>
+    <td align="center" width="50%"><a href="assets/webui_paper_window_zh.png"><img src="assets/webui_paper_window_zh.png" alt="时间窗口合并浏览论文" width="100%" /></a><br /><b>时间窗口检索</b><br /><sub>多天合并、去重与收藏</sub></td>
+    <td align="center" width="50%"><a href="assets/webui_paper_trash_zh.png"><img src="assets/webui_paper_trash_zh.png" alt="不感兴趣论文垃圾箱" width="100%" /></a><br /><b>不感兴趣</b><br /><sub>按点踩时间排序并恢复</sub></td>
+  </tr>
 </table>
 
 <sub>截图使用演示配置与模拟用量数据。</sub>
@@ -235,6 +239,8 @@ MLSys 单模型策略下，“关键词”页替换为“筛选 Prompt”页，�
 ### 📄 研究任务与报告
 
 每日研究处理新论文与未完成队列；过去日报按指定日期补跑；趋势任务围绕主题和时间范围汇总论文。处理篇数上限只限制单次工作量，失败或尚未处理的论文可在后续运行继续。
+
+在“论文检索”中点击“最近 7 / 14 / 30 天”，或设置完成日期范围，可合并浏览多天的论文；按本地分析完成时间倒序排列、合并来源并去重，默认只显示入选论文。点踩后论文从检索中隐藏，可在“收藏”页的“不感兴趣 · 垃圾箱”按点踩时间倒序查找并恢复；历史报告和分析记录保留。
 
 报告按实际批次浏览。“其他报告”收录关键词趋势和历史维护生成的补充报告。可自动收藏评分通过的论文，也可在收藏页一次性收藏已有合格论文。
 

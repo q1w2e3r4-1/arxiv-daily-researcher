@@ -106,6 +106,22 @@ class SearchPapersTests(unittest.TestCase):
         # newest first
         self.assertEqual(result["items"][0]["paper_id"], "a3")
 
+    def test_dismissed_papers_are_hidden_and_restorable(self):
+        self.store.set_paper_preference("arxiv", "a1", preference="dislike", title="Paper")
+        self.assertEqual(self.store.search_papers(qualified_only=True)["total"], 0)
+        self.assertEqual(self.store.search_papers(hide_disliked=False)["total"], 3)
+        self.assertEqual(self.store.list_preferences(preference="dislike")[0]["paper_id"], "a1")
+        self.store.set_paper_preference("arxiv", "a1", preference="none", title="Paper")
+        self.assertEqual(self.store.search_papers(qualified_only=True)["total"], 1)
+        self.assertEqual(self.store.list_preferences(preference="dislike"), [])
+
+    def test_trash_orders_by_dismissal_time_and_pages(self):
+        for paper_id in ("a1", "a2"):
+            self.store.set_paper_preference("arxiv", paper_id, preference="dislike", title=paper_id)
+        self.assertEqual(self.store.list_preferences(preference="dislike", limit=1)[0]["paper_id"], "a2")
+        self.assertEqual(self.store.list_preferences(preference="dislike", limit=1, offset=1)[0]["paper_id"], "a1")
+        self.assertEqual(self.store.search_papers()["total"], 1)
+
     def test_title_query_matches_case_insensitively(self):
         result = self.store.search_papers(query="diffusion")
         self.assertEqual(result["total"], 1)
@@ -269,6 +285,17 @@ class SearchPapersTests(unittest.TestCase):
         entity = self.store.get_paper_entity("prl", records[1]["paper_id"])
         self.assertIsNotNone(entity)
         self.assertEqual(entity["entity_id"], item["entity_id"])
+        # A dismissal of either source hides the whole logical paper.
+        self.store.set_paper_preference("prl", records[1]["paper_id"], preference="dislike", title="Shared result")
+        self.assertEqual(self.store.search_papers(query="shared", source="arxiv")["total"], 0)
+        from modern_webui import backend
+        from unittest.mock import patch
+        with patch.object(backend, "open_store", return_value=self.store):
+            backend.set_preference({"source": "arxiv", "paper_id": records[0]["paper_id"],
+                                    "title": "Shared result", "preference": "none", "restore_entity": True})
+        self.assertEqual(self.store.search_papers(query="shared")["total"], 1)
+        self.assertEqual(self.store.list_preferences(preference="dislike"), [])
+
 
     def test_versionless_mirror_merges_when_arxiv_version_arrives_later(self):
         run_id = self.store.start_run(2, run_kind="legacy_import")

@@ -2654,6 +2654,37 @@ async function renderFavorites(token) {
   }
   bindCommon(root);
   bindFavoriteActions(root);
+  root.querySelector(".section-card")?.insertAdjacentHTML("afterend", `<div id="trash-papers"></div>`);
+  if (!$("#trash-papers", root)) root.insertAdjacentHTML("beforeend", `<div id="trash-papers"></div>`);
+  await loadTrashPapers(token);
+}
+
+async function loadTrashPapers(token) {
+  const target = $("#trash-papers");
+  if (!target) return;
+  const page = state.pageData.trashPage || 0;
+  try {
+    const data = await api(`/api/trash?limit=20&offset=${page * 20}`);
+    if (token !== state.renderToken) return;
+    const rows = data.items || [];
+    if (!rows.length && page > 0) {
+      state.pageData.trashPage = page - 1;
+      return loadTrashPapers(token);
+    }
+    target.innerHTML = section(localeText("不感兴趣 · 垃圾箱", "Not interested · Trash"),
+      `<p class="hint-text">${localeText("按点踩时间倒序排列；恢复后重新出现在论文检索中，不删除分析或历史报告。", "Newest dismissals first. Restore returns a paper to search; analyses and historical reports are preserved.")}</p>` +
+      (rows.length ? rows.map((row, index) => `<div class="action-row"><span>${escapeHtml(formatTime(row.updated_at))} · ${escapeHtml(row.title || row.paper_id)}</span><button class="secondary-button compact-button" data-trash-restore="${index}">${localeText("恢复", "Restore")}</button></div>`).join("") : `<p class="empty-state">${localeText("垃圾箱为空。", "Trash is empty.")}</p>`) +
+      `<div class="pager"><span>${localeText(`共 ${data.total} 篇 · 第 ${page + 1} 页`, `${data.total} papers · Page ${page + 1}`)}</span><button id="trash-prev" class="secondary-button" ${page === 0 ? "disabled" : ""}>${localeText("上一页", "Previous")}</button><button id="trash-next" class="secondary-button" ${(page + 1) * 20 >= data.total ? "disabled" : ""}>${localeText("下一页", "Next")}</button></div>`, { icon: "🗑️" });
+    target.querySelectorAll("[data-trash-restore]").forEach(button => button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await api("/api/preferences", { method: "PUT", body: { ...rows[Number(button.dataset.trashRestore)], preference: "none", restore_entity: true } });
+        await renderFavorites(token);
+      } catch (error) { button.disabled = false; toast(error.message, "error"); }
+    }));
+    $("#trash-prev")?.addEventListener("click", () => { state.pageData.trashPage = page - 1; loadTrashPapers(token); });
+    $("#trash-next")?.addEventListener("click", () => { state.pageData.trashPage = page + 1; loadTrashPapers(token); });
+  } catch (error) { target.innerHTML = `<p class="error-message">${escapeHtml(error.message)}</p>`; }
 }
 
 function favoritesSettingsCard() {
@@ -2709,7 +2740,7 @@ function pagedItems(key, items, empty = "暂无数据") {
 }
 
 function searchParamsFromState() {
-  const values = state.pageData.search || { query: "", source: "", completed_from: "", completed_to: "", min_score: "", liked_only: false, page: 0, size: 20 };
+  const values = state.pageData.search || { query: "", source: "", completed_from: "", completed_to: "", min_score: "", liked_only: false, qualified_only: true, page: 0, size: 20 };
   state.pageData.search = values;
   const params = new URLSearchParams({ query: values.query, limit: String(values.size), offset: String(values.page * values.size) });
   if (values.source) params.set("source", values.source);
@@ -2717,6 +2748,7 @@ function searchParamsFromState() {
   if (values.completed_to) params.set("completed_to", values.completed_to);
   if (values.min_score) params.set("min_score", values.min_score);
   if (values.liked_only) params.set("liked_only", "true");
+  if (values.qualified_only !== false) params.set("qualified_only", "true");
   return params;
 }
 
@@ -2749,13 +2781,13 @@ function paperCard(item) {
     item.strategy_id ? localeText(`策略：${item.strategy_id}`, `Strategy: ${item.strategy_id}`) : "",
   ].filter(Boolean).join(" ｜ ");
   const variants = (item.variants || []).map(sourceVariantCard).join("");
-  return `<details class="paper-card"><summary><span class="score-pill">${score}</span><strong>${badge} ${escapeHtml(item.title)}${preference}</strong><small>${escapeHtml(metadata)}</small></summary><div class="paper-content">${item.authors?.length ? `<p><strong>作者：</strong>${escapeHtml(item.authors.slice(0, 12).join(", "))}</p>` : ""}${item.tldr ? `<p><strong>TL;DR：</strong>${escapeHtml(item.tldr)}</p>` : ""}${(item.merged_keywords || item.extracted_keywords)?.length ? `<p><strong>合并关键词：</strong>${escapeHtml((item.merged_keywords || item.extracted_keywords).join(" · "))}</p>` : ""}${item.categories?.length ? `<p class="muted">${escapeHtml(localeText("分类：", "Categories: "))}${escapeHtml(item.categories.join(" "))}</p>` : ""}${url || pdfUrl ? `<p>${url ? `<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">arXiv / 论文页面</a>` : ""}${url && pdfUrl ? " ｜ " : ""}${pdfUrl ? `<a href="${escapeAttribute(pdfUrl)}" target="_blank" rel="noopener noreferrer">PDF</a>` : ""}</p>` : ""}${variants ? `<div class="paper-variants"><h3>来源变体</h3>${variants}</div>` : ""}</div></details>`;
+  return `<details class="paper-card"><summary><span class="score-pill">${score}</span><strong>${badge} ${escapeHtml(item.title)}${preference}</strong><small>${escapeHtml(metadata)}</small></summary><div class="paper-content"><div class="action-row"><button class="secondary-button compact-button" data-paper-preference="like">${localeText(item.preference === "like" ? "取消收藏" : "👍 收藏", item.preference === "like" ? "Unfavorite" : "👍 Favorite")}</button><button class="secondary-button compact-button" data-paper-preference="dislike">${localeText("👎 不感兴趣", "👎 Not interested")}</button></div>${item.authors?.length ? `<p><strong>作者：</strong>${escapeHtml(item.authors.slice(0, 12).join(", "))}</p>` : ""}${item.tldr ? `<p><strong>TL;DR：</strong>${escapeHtml(item.tldr)}</p>` : ""}${(item.merged_keywords || item.extracted_keywords)?.length ? `<p><strong>合并关键词：</strong>${escapeHtml((item.merged_keywords || item.extracted_keywords).join(" · "))}</p>` : ""}${item.categories?.length ? `<p class="muted">${escapeHtml(localeText("分类：", "Categories: "))}${escapeHtml(item.categories.join(" "))}</p>` : ""}${url || pdfUrl ? `<p>${url ? `<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">arXiv / 论文页面</a>` : ""}${url && pdfUrl ? " ｜ " : ""}${pdfUrl ? `<a href="${escapeAttribute(pdfUrl)}" target="_blank" rel="noopener noreferrer">PDF</a>` : ""}</p>` : ""}${variants ? `<div class="paper-variants"><h3>来源变体</h3>${variants}</div>` : ""}</div></details>`;
 }
 
 async function renderPaperSearch(token) {
   const root = $("#page-root");
-  const values = state.pageData.search || { query: "", source: "", completed_from: "", completed_to: "", min_score: "", liked_only: false, page: 0, size: 20 };
-  root.innerHTML = `${pageHeader()}${section("检索条件", `<div class="form-grid two"><label class="form-field"><span>关键词</span><input id="search-query" value="${escapeAttribute(values.query)}" placeholder="标题、摘要、TL;DR 或关键词" /></label><label class="form-field"><span>来源</span><select id="search-source"><option value="">全部来源</option></select></label><label class="form-field"><span>完成日期开始</span><input id="search-from" type="date" value="${escapeAttribute(values.completed_from)}" /></label><label class="form-field"><span>完成日期结束</span><input id="search-to" type="date" value="${escapeAttribute(values.completed_to)}" /></label><label class="form-field"><span>最低分数</span><input id="search-score" type="number" step="0.5" value="${escapeAttribute(values.min_score)}" /></label><label class="toggle-field"><span>仅收藏论文</span><input id="search-liked" type="checkbox" ${values.liked_only ? "checked" : ""}/><i></i></label></div><div class="action-row"><button id="search-run" class="primary-button">搜索</button></div>`, { icon: "🔍" })}<div id="search-results"></div>`;
+  const values = state.pageData.search || { query: "", source: "", completed_from: "", completed_to: "", min_score: "", liked_only: false, qualified_only: true, page: 0, size: 20 };
+  root.innerHTML = `${pageHeader()}${section("检索条件", `<div class="form-grid two"><label class="form-field"><span>关键词</span><input id="search-query" value="${escapeAttribute(values.query)}" placeholder="标题、摘要、TL;DR 或关键词" /></label><label class="form-field"><span>来源</span><select id="search-source"><option value="">全部来源</option></select></label><label class="form-field"><span>完成日期开始</span><input id="search-from" type="date" value="${escapeAttribute(values.completed_from)}" /></label><label class="form-field"><span>完成日期结束</span><input id="search-to" type="date" value="${escapeAttribute(values.completed_to)}" /></label><label class="form-field"><span>最低分数</span><input id="search-score" type="number" step="0.5" value="${escapeAttribute(values.min_score)}" /></label><label class="toggle-field"><span>仅收藏论文</span><input id="search-liked" type="checkbox" ${values.liked_only ? "checked" : ""}/><i></i></label></div><label class="toggle-field"><span>${localeText("仅入选论文", "Qualified papers only")}</span><input id="search-qualified" type="checkbox" ${values.qualified_only !== false ? "checked" : ""}/><i></i></label><p class="hint-text">${localeText("按本地分析完成日期筛选，合并来源并去重；默认隐藏不感兴趣论文，按完成时间倒序排列。", "Filter by local analysis completion date, merge sources and deduplicate. Dismissed papers are hidden; newest completed first.")}</p><div class="action-row">${[7,14,30].map(days => `<button class="secondary-button" data-search-days="${days}">${localeText(`最近 ${days} 天`, `Last ${days} days`)}</button>`).join("")}<button id="search-run" class="primary-button">搜索</button></div>`, { icon: "🔍" })}<div id="search-results"></div>`;
   const sourceSelect = $("#search-source");
   decorateNativeSelects(root);
   try {
@@ -2769,9 +2801,19 @@ async function renderPaperSearch(token) {
     if (values.executed) await loadSearchResults(token);
   } catch (error) { $("#search-results").innerHTML = `<p class="error-message">${escapeHtml(error.message)}</p>`; }
   $("#search-run").addEventListener("click", () => {
-    state.pageData.search = { ...values, query: $("#search-query").value, source: sourceSelect.value, completed_from: $("#search-from").value, completed_to: $("#search-to").value, min_score: $("#search-score").value, liked_only: $("#search-liked").checked, page: 0, size: values.size, executed: true };
+    state.pageData.search = { ...values, query: $("#search-query").value, source: sourceSelect.value, completed_from: $("#search-from").value, completed_to: $("#search-to").value, min_score: $("#search-score").value, liked_only: $("#search-liked").checked, qualified_only: $("#search-qualified").checked, page: 0, size: values.size, executed: true };
     loadSearchResults(token);
   });
+  root.querySelectorAll("[data-search-days]").forEach(button => button.addEventListener("click", () => {
+    const end = new Date();
+    const start = new Date(end);
+    start.setDate(start.getDate() - Number(button.dataset.searchDays) + 1);
+    const dateValue = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    $("#search-from").value = dateValue(start);
+    $("#search-to").value = dateValue(end);
+    $("#search-run").click();
+  }));
+  applyLocale(root);
 }
 
 async function loadSearchResults(token) {
@@ -2792,10 +2834,22 @@ async function loadSearchResults(token) {
       return;
     }
     const pages = Math.max(1, Math.ceil(result.total / values.size));
+    if (values.page >= pages) { values.page = pages - 1; return loadSearchResults(token); }
     const pager = pages > 1 ? `<div class="pager"><span>${state.language === "en" ? `Page ${values.page + 1} / ${pages} · 20 papers per page` : `第 ${values.page + 1} / ${pages} 页 · 每页 20 篇`}</span><button id="search-prev" class="secondary-button compact-button" ${values.page === 0 ? "disabled" : ""}>${localeText("上一页", "Previous")}</button><button id="search-next" class="secondary-button compact-button" ${values.page >= pages - 1 ? "disabled" : ""}>${localeText("下一页", "Next")}</button></div>` : "";
     const resultTitle = localeText(`检索结果（共 ${result.total} 篇匹配）`, `Search results (${result.total} matches)`);
     target.innerHTML = section(resultTitle, `${result.items?.length ? result.items.map(paperCard).join("") : '<p class="empty-state">没有匹配的论文。</p>'}${pager}`);
     applyLocale(target);
+    target.querySelectorAll(".paper-card").forEach((card, index) => {
+      const item = result.items[index];
+      card.querySelectorAll("[data-paper-preference]").forEach(button => button.addEventListener("click", async () => {
+        button.disabled = true;
+        const wanted = button.dataset.paperPreference;
+        try {
+          await api("/api/preferences", { method: "PUT", body: { ...item, preference: item.preference === wanted ? "none" : wanted } });
+          await loadSearchResults(token);
+        } catch (error) { button.disabled = false; toast(error.message, "error"); }
+      }));
+    });
     $("#search-prev")?.addEventListener("click", () => { values.page -= 1; loadSearchResults(token); });
     $("#search-next")?.addEventListener("click", () => { values.page += 1; loadSearchResults(token); });
   } catch (error) {

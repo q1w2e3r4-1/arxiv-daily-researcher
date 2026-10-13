@@ -4264,7 +4264,7 @@ class DailyResearchStore:
         return result
 
     def list_preferences(
-        self, *, preference: Optional[str] = None, limit: int = 100
+        self, *, preference: Optional[str] = None, limit: int = 100, offset: int = 0
     ) -> list[Dict[str, Any]]:
         """List marked papers newest-first; 'none' rows are skipped by default."""
         query = "SELECT * FROM paper_preferences"
@@ -4274,8 +4274,8 @@ class DailyResearchStore:
             params.append(preference)
         elif preference != "all":
             query += " WHERE preference != 'none'"
-        query += " ORDER BY updated_at DESC LIMIT ?"
-        params.append(int(limit))
+        query += " ORDER BY updated_at DESC, source, paper_id LIMIT ? OFFSET ?"
+        params.extend([max(1, min(int(limit), 500)), max(0, int(offset))])
         with self._connect() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._preference_row_to_dict(row) for row in rows]
@@ -4676,6 +4676,7 @@ class DailyResearchStore:
         variant: Dict[str, Any],
         *,
         source: str,
+        qualified_only: bool = False,
         min_score: Optional[float],
         completed_from: Optional[str],
         completed_to: Optional[str],
@@ -4683,6 +4684,8 @@ class DailyResearchStore:
         """Pick the same source-level record that made the entity pass filters."""
         completed_at = str(variant.get("completed_at") or "")
         if not completed_at or (source and variant.get("source") != source):
+            return False
+        if qualified_only and variant.get("is_qualified") is not True:
             return False
         completed_day = completed_at[:10]
         if completed_from and completed_day < completed_from:
@@ -4704,6 +4707,8 @@ class DailyResearchStore:
         query: str = "",
         source: Optional[str] = None,
         liked_only: bool = False,
+        hide_disliked: bool = True,
+        qualified_only: bool = False,
         min_score: Optional[float] = None,
         completed_from: Optional[str] = None,
         completed_to: Optional[str] = None,
@@ -4721,6 +4726,8 @@ class DailyResearchStore:
         self._ensure_paper_entity_coverage()
         conditions: list[str] = []
         variant_conditions = ["dp.completed_at IS NOT NULL"]
+        if qualified_only:
+            variant_conditions.append("json_extract(dp.score_json, '$.is_qualified') = 1")
         variant_params: list[Any] = []
         normalized_source = (source or "").strip().casefold()
         if normalized_source:
@@ -4764,6 +4771,12 @@ class DailyResearchStore:
                 )"""
             )
 
+        if hide_disliked:
+            conditions.append("""NOT EXISTS (
+                SELECT 1 FROM paper_preferences pp
+                JOIN daily_papers dp ON dp.source = pp.source AND dp.paper_id = pp.paper_id
+                WHERE dp.entity_id = pe.entity_id AND pp.preference = 'dislike'
+            )""")
         where_clause = " AND ".join(conditions)
         bounded_limit = max(1, min(int(limit), 200))
         bounded_offset = max(0, int(offset))
@@ -4782,6 +4795,8 @@ class DailyResearchStore:
                 completed_to,
                 stripped,
                 liked_only,
+                hide_disliked,
+                qualified_only,
             )
         )
         with self._connect() as conn:
@@ -4820,6 +4835,7 @@ class DailyResearchStore:
                         if self._variant_matches_search_filters(
                             variant,
                             source=normalized_source,
+                            qualified_only=qualified_only,
                             min_score=min_score,
                             completed_from=completed_from,
                             completed_to=completed_to,

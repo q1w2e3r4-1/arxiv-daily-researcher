@@ -1581,6 +1581,7 @@ def paper_search(filters: Mapping[str, Any]) -> dict[str, Any]:
             query=query,
             source=source,
             liked_only=_coerce_bool(filters.get("liked_only")),
+            qualified_only=_coerce_bool(filters.get("qualified_only")),
             min_score=min_score,
             completed_from=completed_from,
             completed_to=completed_to,
@@ -1613,6 +1614,19 @@ def preferences_summary() -> dict[str, Any]:
         }
     except Exception as exc:
         raise ModernWebUIError(f"读取收藏数据失败：{exc}") from exc
+
+
+def trash_papers(filters: Mapping[str, Any]) -> dict[str, Any]:
+    store = open_store()
+    if store is None:
+        return {"available": False, "total": 0, "items": []}
+    try:
+        limit = max(1, min(int(filters.get("limit", 20)), 100))
+        offset = max(0, int(filters.get("offset", 0)))
+    except (TypeError, ValueError) as exc:
+        raise ModernWebUIError("Invalid pagination") from exc
+    return {"available": True, "total": store.get_preference_counts()["dislike"],
+            "items": store.list_preferences(preference="dislike", limit=limit, offset=offset)}
 
 
 def collect_qualified_favorites() -> dict[str, Any]:
@@ -1653,6 +1667,16 @@ def set_preference(payload: Mapping[str, Any]) -> dict[str, Any]:
         )
     except (TypeError, ValueError) as exc:
         raise ModernWebUIError(str(exc)) from exc
+    if preference == "none" and _coerce_bool(payload.get("restore_entity")):
+        entity = store.get_paper_entity(source, paper_id)
+        for variant in (entity or {}).get("variants", []):
+            if variant.get("preference") == "dislike":
+                store.set_paper_preference(
+                    variant["source"], variant["paper_id"], preference="none",
+                    title=variant.get("title") or title,
+                    canonical_id=variant.get("canonical_id"), version=variant.get("version"),
+                    authors=variant.get("authors"), categories=variant.get("categories"),
+                )
     return {"ok": True, "preference": preference}
 
 

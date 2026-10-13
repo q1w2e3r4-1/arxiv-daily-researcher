@@ -41,10 +41,12 @@ async function main() {
   const base = `http://127.0.0.1:${server.address().port}`;
   let browser;
   try {
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH } : {}) });
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     const pageErrors = [];
     const paperRequests = [];
+    let dismissed = false;
+    const fixturePaper = { entity_id: "p1", paper_id: "p1", source: "arxiv", sources: ["arxiv"], title: "Demo inference optimization", total_score: null, is_qualified: true, authors: [], variants: [] };
     page.on("pageerror", (error) => pageErrors.push(error.message));
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
@@ -56,9 +58,15 @@ async function main() {
       else if (endpoint === "/api/i18n") payload = { items: {} };
       else if (endpoint === "/api/papers") {
         paperRequests.push(url.searchParams.toString());
-        payload = { available: true, sources: ["arxiv"], total: url.searchParams.has("query") || url.searchParams.has("min_score") ? 1 : 0,
-          items: url.searchParams.has("query") || url.searchParams.has("min_score") ? [{ entity_id: "p1", paper_id: "p1", source: "arxiv", sources: ["arxiv"], title: "Unscored fixture paper", total_score: null, is_qualified: null, authors: [], variants: [] }] : [] };
-      } else if (endpoint === "/api/reports") payload = { daily: reports, trend: [], other: supplements };
+        payload = { available: true, sources: ["arxiv"], total: !dismissed && (url.searchParams.has("query") || url.searchParams.has("min_score")) ? 1 : 0,
+          items: !dismissed && (url.searchParams.has("query") || url.searchParams.has("min_score")) ? [fixturePaper] : [] };
+      } else if (endpoint === "/api/preferences") {
+        const body = route.request().postDataJSON();
+        dismissed = body.preference === "dislike";
+        payload = { ok: true, preference: body.preference };
+      } else if (endpoint === "/api/trash") payload = { available: true, total: dismissed ? 1 : 0, items: dismissed ? [{ ...fixturePaper, preference: "dislike", updated_at: "2026-08-20T08:00:00" }] : [] };
+      else if (endpoint === "/api/favorites") payload = { available: true, counts: { like: 0, dislike: dismissed ? 1 : 0 }, liked: [], authors: [], keywords: [] };
+      else if (endpoint === "/api/reports") payload = { daily: reports, trend: [], other: supplements };
       else if (/^\/api\/reports\/[rs][12]\/papers$/.test(endpoint)) payload = { items: [] };
       else if (/^\/api\/reports\/[rs][12]\/file$/.test(endpoint)) {
         await route.fulfill({ status: 200, contentType: "text/html", body: '<!doctype html><html><body><div class="card pass"><div class="field">Fixture report</div></div></body></html>' });
@@ -77,6 +85,35 @@ async function main() {
     await page.locator(".score-pill").waitFor();
     assert.equal((await page.locator(".score-pill").textContent()).trim(), "—");
     assert(paperRequests.some((query) => new URLSearchParams(query).get("min_score") === "0"));
+
+    await Promise.all([page.waitForResponse(response => response.url().includes("/api/papers?") && response.url().includes("completed_from")), page.locator('[data-search-days="14"]').click()]);
+    const windowQuery = new URLSearchParams(paperRequests.at(-1));
+    assert.equal(windowQuery.get("qualified_only"), "true");
+    assert(windowQuery.get("completed_from"));
+    await page.locator(".paper-card summary").click();
+    await page.screenshot({ path: path.resolve(__dirname, "../assets/webui_paper_window_zh.png"), fullPage: true });
+    await page.locator('[data-paper-preference="dislike"]').click();
+    await page.locator(".paper-card").waitFor({ state: "detached" });
+    await page.goto(`${base}/#content/favorites`);
+    await page.locator("[data-trash-restore]").waitFor();
+    await page.screenshot({ path: path.resolve(__dirname, "../assets/webui_paper_trash_zh.png"), fullPage: true });
+    await page.locator("#language-button").click();
+    await page.locator("[data-trash-restore]").waitFor();
+    await page.screenshot({ path: path.resolve(__dirname, "../assets/webui_paper_trash_en.png"), fullPage: true });
+    await page.locator("#theme-button").click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2));
+    assert.match(await page.locator("#trash-papers").textContent(), /Trash/);
+    await page.locator("[data-trash-restore]").click();
+    await page.locator("[data-trash-restore]").waitFor({ state: "detached" });
+    await page.goto(`${base}/#content/paper_search`);
+    await page.locator(".paper-card").waitFor();
+    assert.equal(await page.locator(".paper-card").count(), 1);
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2));
+    await page.setViewportSize({ width: 1280, height: 900 });
+
+    await page.locator("#theme-button").click();
+    await page.screenshot({ path: path.resolve(__dirname, "../assets/webui_paper_window_en.png"), fullPage: true });
 
     await page.goto(`${base}/#content/reports`);
     await page.locator('[data-scroll-select="daily:arxiv"]').waitFor();
