@@ -4,6 +4,8 @@ Config I/O module - shared read/write logic for .env and runtime/config.json.
 Used by: src/utils/setup_wizard.py, src/modern_webui/app.py
 """
 
+from utils.mlsys_prompt import validate_prompt_overrides
+
 import errno
 import json
 import json5
@@ -868,6 +870,8 @@ def build_config_dict(
     learned_weight_dampening: float = 0.5,
     learned_term_weight_cap: float = 2.0,
     mlsys_single_model_passing_score: float = 6.0,
+    mlsys_system_prompt: str = "",
+    mlsys_user_template: str = "",
     score_strategy_explicit: bool = True,
     include_all_in_report: bool = True,
     keyword_tracker_enabled: bool = True,
@@ -1355,8 +1359,11 @@ def build_config_dict(
         raise ValueError("MLSys 单模型及格分必须是 0 到 13 之间的有限数字") from exc
     if not math.isfinite(mlsys_passing_score) or not 0 <= mlsys_passing_score <= 13:
         raise ValueError("MLSys 单模型及格分必须是 0 到 13 之间的有限数字")
+    validate_prompt_overrides(mlsys_system_prompt, mlsys_user_template)
     config["scoring_settings"]["mlsys_single_model"] = {
         "passing_score": mlsys_passing_score,
+        "system_prompt": mlsys_system_prompt,
+        "user_template": mlsys_user_template,
     }
 
     # Preserve a pre-V2 configuration's missing strategy on a UI/wizard
@@ -1588,6 +1595,8 @@ def flatten_config_dict(config: Dict[str, Any]) -> Dict[str, Any]:
     mlsys_single_model = sc.get("mlsys_single_model", {})
     if not isinstance(mlsys_single_model, dict):
         mlsys_single_model = {}
+    flat["mlsys_system_prompt"] = mlsys_single_model.get("system_prompt", "")
+    flat["mlsys_user_template"] = mlsys_single_model.get("user_template", "")
     flat["mlsys_single_model_passing_score"] = mlsys_single_model.get(
         "passing_score", 6.0
     )

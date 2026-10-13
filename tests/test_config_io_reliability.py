@@ -31,6 +31,22 @@ from config import (  # noqa: E402
 
 
 class ConfigIOReliabilityTests(unittest.TestCase):
+    def test_single_model_prompt_roundtrip_and_validation(self):
+        args = dict(score_strategy="mlsys_single_model_v1", mlsys_system_prompt="Efficiency rules", mlsys_user_template="Title: {title} Abstract: {abstract}")
+        flat = flatten_config_dict(build_config_dict(**args))
+        self.assertEqual(flat["mlsys_system_prompt"], args["mlsys_system_prompt"])
+        self.assertEqual(flat["mlsys_user_template"], args["mlsys_user_template"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.json"
+            path.write_text(json.dumps(build_config_dict(**args)))
+            instance = Settings()
+            instance.load_from_search_config(path)
+            self.assertEqual(instance.MLSYS_SYSTEM_PROMPT, args["mlsys_system_prompt"])
+            self.assertEqual(instance.load_report_template("mlsys_screening_prompt.json")["prompts"]["user_template"], args["mlsys_user_template"])
+        for bad in ["missing placeholders", "Title: {title}", ""]:
+            with self.assertRaises(ValueError):
+                build_config_dict(**{**args, "mlsys_user_template": bad})
+
     def test_legacy_config_is_copied_once_to_ignored_runtime_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

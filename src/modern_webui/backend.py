@@ -7,6 +7,8 @@ second settings store or background process.
 
 from __future__ import annotations
 
+from utils.mlsys_prompt import builtin_prompt
+
 import base64
 from copy import deepcopy
 import hashlib
@@ -519,9 +521,13 @@ def public_settings() -> dict[str, Any]:
     """Return configuration plus redacted environment values for the UI."""
     env = read_env()
     flat = flat_config()
+    default_prompt = builtin_prompt(Path(__file__).resolve().parents[2] / "configs/templates/reports/mlsys_screening_prompt.json")
+    flat["mlsys_system_prompt"] = flat.get("mlsys_system_prompt") or default_prompt["system"]
+    flat["mlsys_user_template"] = flat.get("mlsys_user_template") or default_prompt["user_template"]
     return {
         "current_version": updater._get_local_version(),
         "config": flat,
+        "mlsys_prompt_default": default_prompt,
         "env": {key: str(env.get(key) or "") for key in PUBLIC_ENV_FIELDS},
         "secrets": {key: bool(str(env.get(key) or "").strip()) for key in SECRET_ENV_FIELDS},
         "persistence": persistence_info(flat),

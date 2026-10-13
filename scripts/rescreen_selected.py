@@ -156,7 +156,15 @@ def run(limit: int) -> None:
         run_locked(limit, AnalysisAgent, settings)
 
 
+def ensure_frozen_prompt(settings) -> None:
+    frozen_prompts = json.loads(PROMPT.read_bytes())["prompts"]
+    effective = settings.load_report_template("mlsys_screening_prompt.json")["prompts"]
+    if effective != frozen_prompts:
+        raise RuntimeError("网页自定义 Prompt 与冻结复评文件不同；停止以避免混用评分规则")
+
+
 def run_locked(limit: int, agent_type, settings) -> None:
+    ensure_frozen_prompt(settings)
     with connect(DB) as conn:
         initialize(conn)
         experiment = check_experiment(conn)

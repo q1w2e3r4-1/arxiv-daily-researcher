@@ -123,7 +123,7 @@ docker compose ps
 
 在“配置 → API”填写低成本 LLM 和高性能 LLM 的 API Key、Base URL、模型名，并测试连接。前者负责评分和翻译，后者负责深度分析和趋势总结；两组可以使用同一个模型。
 
-在“关键词”中填写研究背景与主关键词，选择数据源和评分策略，点击侧边栏“保存所有更改”。首次运行可将每日研究的处理上限设为 5 篇；确认结果后再调整篇数和运行时间。
+选择数据源和评分策略。MLSys 单模型策略下，在“配置 → 筛选 Prompt”查看或修改默认筛选规则；其他策略在“关键词”中填写研究背景与主关键词。点击侧边栏“保存所有更改”。首次运行可将每日研究的处理上限设为 5 篇；确认结果后再调整篇数和运行时间。
 
 在“运行 → 每日研究”启动任务，在“内容 → 报告”阅读结果。
 
@@ -166,6 +166,10 @@ docker compose exec arxiv-daily-researcher python src/utils/setup_wizard.py
   <tr>
     <td align="center" width="50%"><a href="assets/webui_history_import_v4.png"><img src="assets/webui_history_import_v4.png" alt="历史导入与维护调度" width="100%" /></a><br /><b>历史维护</b><br /><sub>导入、补全与运行时段</sub></td>
     <td align="center" width="50%"><a href="assets/webui_data_management_v4.png"><img src="assets/webui_data_management_v4.png" alt="数据库备份与恢复" width="100%" /></a><br /><b>备份与同步</b><br /><sub>数据快照与恢复</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><a href="assets/webui_prompt_v1_8_zh.png"><img src="assets/webui_prompt_v1_8_zh.png" alt="MLSys screening prompt in Chinese" width="100%" /></a><br /><b>筛选 Prompt</b><br /><sub>系统规则与论文输入模板</sub></td>
+    <td align="center" width="50%"><a href="assets/webui_prompt_v1_8_en.png"><img src="assets/webui_prompt_v1_8_en.png" alt="MLSys screening prompt in English" width="100%" /></a><br /><b>英文界面</b><br /><sub>编辑、保存与恢复默认</sub></td>
   </tr>
 </table>
 
@@ -223,6 +227,8 @@ docker compose -f tests/docker-compose.yml ps
 | 加权关键词＋扣分 | 沿用加权关键词的加分与及格线，不关注关键词按相关度和独立权重扣分。 |
 | 偏好学习 V1 | 在加权评分上结合喜欢、不喜欢和历史通过论文的学习信号调整得分。 |
 | MLSys 单模型 V1 | 使用 MLSys 筛选提示词，由一个模型给出 0–13 分及理由；总分达到可配置及格线时通过。适合以 AI 基础设施为主的选题。 |
+
+MLSys 单模型策略下，“关键词”页替换为“筛选 Prompt”页，默认加载 v1.8 的系统规则和论文输入模板。可以编辑并保存，也可恢复默认；输入模板必须保留 `{title}` 和 `{abstract}`。评分不使用关键词或参考文献提取，也无需填写关键词。修改 Prompt 会更新待处理论文的评分缓存，已有报告保留原评分。
 
 选择扣分策略后，“关键词”页显示不关注关键词设置。每个扣分词的权重范围为 0–1；同一词不能同时作为主关键词和扣分词。
 

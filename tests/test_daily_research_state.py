@@ -78,6 +78,17 @@ class _Agent:
 
 
 class DailyResearchStateTests(unittest.TestCase):
+    def test_single_model_cache_ignores_keywords_but_tracks_prompt_overrides(self):
+        paper = _paper()
+        with patch.object(settings, "SCORE_STRATEGY", MLSYS_SINGLE_MODEL_V1):
+            first = build_stage_input_fingerprints(paper, {"old": 1.0}, {})["score"]
+            with patch.object(settings, "PRIMARY_KEYWORDS", []), patch.object(settings, "RESEARCH_CONTEXT", "different"):
+                second = build_stage_input_fingerprints(paper, {}, {})["score"]
+            with patch.object(settings, "MLSYS_SYSTEM_PROMPT", "A new screening policy"), patch.object(settings, "MLSYS_USER_TEMPLATE", "Title: {title} Abstract: {abstract}"):
+                changed = build_stage_input_fingerprints(paper, {}, {})["score"]
+        self.assertEqual(first, second)
+        self.assertNotEqual(first, changed)
+
     def test_semantic_scholar_translation_defaults_to_enabled(self):
         self.assertTrue(Settings.model_fields["TRANSLATE_SEMANTIC_SCHOLAR_TLDR"].default)
 
@@ -152,7 +163,7 @@ class DailyResearchStateTests(unittest.TestCase):
             self.assertIsNone(store.get_paper_preference("arxiv", paper.paper_id))
 
     def test_score_fingerprint_change_rescores_an_incomplete_paper(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(settings, "SCORE_STRATEGY", "legacy_weighted_keyword_v1"):
             store = DailyResearchStore(Path(temp_dir) / "daily.db")
             paper = _paper()
             first_agent = _Agent()
@@ -394,8 +405,16 @@ class DailyResearchStateTests(unittest.TestCase):
         self.assertEqual(len({first, second, third, fourth}), 4)
 
     def test_pipeline_limit_queues_complete_scan_before_processing_one_paper(self):
+        self._run_pipeline_limit_case()
+
+    def test_single_model_pipeline_needs_no_keywords_or_reference_extraction(self):
+        self._run_pipeline_limit_case("mlsys_single_model_v1", False)
+
+    def _run_pipeline_limit_case(self, strategy="legacy_weighted_keyword_v1", with_keywords=True):
         class _KeywordAgent:
             def get_all_keywords(self):
+                if not with_keywords:
+                    raise AssertionError("The prompt strategy must not extract keywords")
                 return {"quantum": 1.0}
 
         class _SearchAgent:
@@ -458,10 +477,10 @@ class DailyResearchStateTests(unittest.TestCase):
                 "ENABLED_SOURCES": ["arxiv"],
                 "TARGET_DOMAINS": ["quant-ph"],
                 "TARGET_JOURNALS": [],
-                "ENABLE_REFERENCE_EXTRACTION": False,
-                "PRIMARY_KEYWORDS": ["quantum"],
+                "ENABLE_REFERENCE_EXTRACTION": not with_keywords,
+                "PRIMARY_KEYWORDS": ["quantum"] if with_keywords else [],
                 "PRIMARY_KEYWORD_WEIGHT": 1.0,
-                "SCORE_STRATEGY": "legacy_weighted_keyword_v1",
+                "SCORE_STRATEGY": strategy,
                 "HISTORY_DIR": root / "history",
                 "OPENALEX_API_KEY": "",
                 "ENABLE_SEMANTIC_SCHOLAR_TLDR": False,

@@ -123,7 +123,7 @@ Open `http://HOST:8501`, replacing `HOST` with your server address, and create a
 
 Under **Configuration → API**, enter the API key, base URL, and model name for both the low-cost and high-capability LLM, then test each connection. The former handles scoring and translation; the latter handles detailed analysis and trend summaries. Both roles may use the same model.
 
-Enter your research background and primary keywords under **Keywords**, select sources and a scoring strategy, and click **Save All Changes** in the sidebar. For an initial run, set the daily processing limit to 5 papers; adjust the limit and schedule after reviewing the results.
+Select sources and a scoring strategy. With MLSys single model, open **Configuration → Screening Prompt** to review or edit the default rules; other strategies use research context and primary keywords under **Keywords**. Click **Save All Changes** in the sidebar. For an initial run, set the daily processing limit to 5 papers; adjust the limit and schedule after reviewing the results.
 
 Start a task under **Run → Daily Research** and read its results under **Content → Reports**.
 
@@ -166,6 +166,10 @@ docker compose exec arxiv-daily-researcher python src/utils/setup_wizard.py
   <tr>
     <td align="center" width="50%"><a href="assets/webui_history_import_v4.png"><img src="assets/webui_history_import_v4.png" alt="History import and maintenance scheduling" width="100%" /></a><br /><b>History maintenance</b><br /><sub>Import, repair, and scheduling</sub></td>
     <td align="center" width="50%"><a href="assets/webui_data_management_v4.png"><img src="assets/webui_data_management_v4.png" alt="Database backups and restore" width="100%" /></a><br /><b>Backup and sync</b><br /><sub>Database snapshots and recovery</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><a href="assets/webui_prompt_v1_8_zh.png"><img src="assets/webui_prompt_v1_8_zh.png" alt="MLSys screening prompt in Chinese" width="100%" /></a><br /><b>Screening Prompt</b><br /><sub>System rules and paper prompt template</sub></td>
+    <td align="center" width="50%"><a href="assets/webui_prompt_v1_8_en.png"><img src="assets/webui_prompt_v1_8_en.png" alt="MLSys screening prompt in English" width="100%" /></a><br /><b>English interface</b><br /><sub>Edit, save, and restore defaults</sub></td>
   </tr>
 </table>
 
@@ -223,6 +227,8 @@ The repository also includes the `main.py` command-line entry point and GitHub A
 | Weighted keywords with penalties | Uses the weighted keyword score and threshold, subtracting unwanted keyword relevance × its individual weight. |
 | Learned preferences V1 | Adjusts weighted scores using signals from likes, dislikes, and previously qualifying papers. |
 | MLSys single model V1 | Uses the MLSys screening prompt to produce a 0–13 score and rationale with one model. Papers pass at the configurable threshold. Intended for AI infrastructure topics. |
+
+With MLSys single model, **Screening Prompt** replaces the Keywords page and loads the v1.8 system rules and paper prompt template by default. Edit and save the prompts, or restore the defaults; keep `{title}` and `{abstract}` in the paper template. Scoring requires no keywords and skips reference-keyword extraction. Prompt changes invalidate pending score caches; existing reports retain their original scores.
 
 Selecting the penalty strategy shows unwanted keyword settings on the **Keywords** page. Each penalty weight ranges from 0 to 1; a primary keyword cannot also be a penalty term.
 

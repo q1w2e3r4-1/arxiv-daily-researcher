@@ -52,7 +52,16 @@ def _mlsys_prompt_fingerprint() -> str:
     """Fingerprint the exact prompt file bytes used by the MLSys strategy."""
     prompt_path = settings.REPORT_TEMPLATES_DIR / "mlsys_screening_prompt.json"
     try:
-        return hashlib.sha256(prompt_path.read_bytes()).hexdigest()
+        original = hashlib.sha256(prompt_path.read_bytes()).hexdigest()
+        system = settings.MLSYS_SYSTEM_PROMPT
+        user = settings.MLSYS_USER_TEMPLATE
+        if system.strip():
+            from utils.mlsys_prompt import builtin_prompt
+            default = builtin_prompt(prompt_path)
+            if system == default["system"] and user == default["user_template"]:
+                return original
+            return stage_input_fingerprint({"builtin": original, "system": system, "user_template": user})
+        return original
     except OSError:
         return "missing"
 
@@ -138,6 +147,8 @@ def build_score_audit_metadata(
         "prompt_revision": SCORE_PROMPT_REVISION,
     }
     if configured_score_strategy_id() == MLSYS_SINGLE_MODEL_V1:
+        policy_input = {key: policy_input[key] for key in ("schema", "strategy_id", "model")}
+        policy_input["score_settings"] = {}
         policy_input["mlsys_single_model"] = {
             "prompt_sha256": _mlsys_prompt_fingerprint(),
             "passing_score": settings.MLSYS_SINGLE_MODEL_PASSING_SCORE,
@@ -211,6 +222,7 @@ def build_stage_input_fingerprints(
         "prompt_revision": SCORE_PROMPT_REVISION,
     }
     if configured_score_strategy_id() == MLSYS_SINGLE_MODEL_V1:
+        score_payload = {key: score_payload[key] for key in ("schema", "paper", "model", "prompt_revision")}
         score_payload["mlsys_single_model"] = {
             "prompt_sha256": _mlsys_prompt_fingerprint(),
             "passing_score": settings.MLSYS_SINGLE_MODEL_PASSING_SCORE,

@@ -1,3 +1,5 @@
+from utils.mlsys_prompt import validate_prompt_overrides
+
 import os
 import json
 import math
@@ -450,6 +452,8 @@ class Settings(BaseSettings):
     LEARNED_TERM_WEIGHT_CAP: float = 2.0
     # Optional single-model MLSys prompt strategy; score scale is 0–13.
     MLSYS_SINGLE_MODEL_PASSING_SCORE: float = 6.0
+    MLSYS_SYSTEM_PROMPT: str = ""
+    MLSYS_USER_TEMPLATE: str = ""
 
     # 报告配置
     INCLUDE_ALL_IN_REPORT: bool = True
@@ -809,6 +813,11 @@ class Settings(BaseSettings):
                     if not math.isfinite(threshold) or not 0 <= threshold <= 13:
                         raise ValueError("MLSys screening passing_score 必须在 0–13 之间")
                     self.MLSYS_SINGLE_MODEL_PASSING_SCORE = threshold
+                    system = mlsys_cfg.get("system_prompt", "")
+                    user = mlsys_cfg.get("user_template", "")
+                    validate_prompt_overrides(system, user)
+                    self.MLSYS_SYSTEM_PROMPT = system
+                    self.MLSYS_USER_TEMPLATE = user
 
                 # 报告配置
                 self.INCLUDE_ALL_IN_REPORT = score_cfg.get("include_all_in_report", True)
@@ -1365,7 +1374,10 @@ class Settings(BaseSettings):
 
         try:
             with open(template_path, "r", encoding="utf-8") as f:
-                return json5.load(f)  # 使用json5支持注释
+                template = json5.load(f)  # 使用json5支持注释
+                if template_name == "mlsys_screening_prompt.json" and self.MLSYS_SYSTEM_PROMPT.strip():
+                    template["prompts"] = {"system": self.MLSYS_SYSTEM_PROMPT, "user_template": self.MLSYS_USER_TEMPLATE}
+                return template
         except Exception as e:
             print(f"加载报告模板 {template_name} 失败: {e}")
             return {}

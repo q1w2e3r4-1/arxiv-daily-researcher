@@ -83,9 +83,9 @@ const MODERN_EN_TRANSLATIONS = Object.freeze({
   "请求超时（秒）": "Request timeout (seconds)",
   "公告回看宽限（天）": "Announcement lookback grace (days)",
   "基础通过分": "Base passing score",
-  "MLSys 单模型 V1（实验）": "MLSys Single Model V1 (Experimental)",
+  "MLSys 单模型 V1": "MLSys single model V1",
   "MLSys 单模型及格分（0–13）": "MLSys single-model passing score (0–13)",
-  "使用单次模型判断，为 LLM/基础模型执行基础设施论文给出 0–13 分；达到独立配置的门槛后通过。实验策略，结果取决于提示词和模型。": "Uses one model judgment to score LLM/foundation-model execution infrastructure papers from 0 to 13. Papers pass at the configured threshold. Experimental; results depend on the prompt and model.",
+  "使用筛选 Prompt 判断通用 LLM/基础模型训练与推理的效率贡献，给出 0–13 分；达到配置门槛后通过。": "Uses one model judgment to score LLM/foundation-model execution infrastructure papers from 0 to 13. Papers pass at the configured threshold. Experimental; results depend on the prompt and model.",
   "单关键词最高分": "Maximum score per keyword",
   "输出 Markdown": "Markdown report",
   "输出 HTML": "HTML report",
@@ -121,6 +121,8 @@ const MODERN_EN_TRANSLATIONS = Object.freeze({
   "论文检索": "Paper Search",
   "从 SQLite 多维论文历史库检索已处理论文及其来源变体。": "Search processed papers and source variants in the SQLite research history.",
   "配置 / 关键词": "Configuration / Keywords",
+  "选择论文的评分方式。MLSys 单模型使用筛选 Prompt 判断训练与推理效率贡献。": "Choose how papers are scored. MLSys uses the screening prompt to assess training and inference efficiency contributions.",
+  "使用筛选 Prompt 判断通用 LLM/基础模型训练与推理的效率贡献，给出 0–13 分；达到配置门槛后通过。": "The screening prompt scores general-purpose LLM/foundation-model training and inference efficiency from 0 to 13; papers pass at the configured threshold.",
   "关键词": "Keywords",
   "设置研究背景、主关键词和参考文献关键词提取。": "Set research context, primary keywords, and reference-keyword extraction.",
   "配置 / 数据源": "Configuration / Data Sources",
@@ -680,7 +682,7 @@ const MODERN_EN_TRANSLATIONS = Object.freeze({
   "连接与目录权限正常。": "Connection and directory access are available.",
   "连接或目录权限验证失败。": "Connection or directory access validation failed.",
   "选择解析研究论文 PDF 的方式。": "Choose how research-paper PDFs are parsed.",
-  "选择论文如何获得资格，以及通过后如何排序。新配置建议使用核心相关性 V2。": "Choose how papers qualify and how qualifying papers are ranked. Core Relevance V2 is recommended for new configurations.",
+  "选择论文的评分方式。MLSys 单模型使用筛选 Prompt 判断训练与推理效率贡献。": "Choose how papers qualify and how qualifying papers are ranked. Core Relevance V2 is recommended for new configurations.",
   "重置密码": "Reset password",
   "重试": "Retry",
   "重试与日志": "Retries and Logs",
@@ -1422,6 +1424,9 @@ function readLocation() {
   }
 }
 
+function promptOnlyScoring() { return configValue("score_strategy", "core_relevance_v2") === "mlsys_single_model_v1"; }
+function promptPageLabel(id, fallback) { return id === "keywords" && promptOnlyScoring() ? localeText("📝 筛选 Prompt", "📝 Screening Prompt") : localizedString(fallback); }
+
 function renderNavigation() {
   const navigation = $("#group-navigation");
   navigation.innerHTML = NAVIGATION.map((group) => `
@@ -1431,7 +1436,7 @@ function renderNavigation() {
   `).join("");
   const current = pageGroup(state.page) || NAVIGATION[0];
   $("#top-tabs").innerHTML = current.pages.map(([id, label]) => `
-    <button class="top-tab ${id === state.page ? "is-active" : ""}" data-page="${id}" role="tab" aria-selected="${id === state.page}">${escapeHtml(label)}</button>
+    <button class="top-tab ${id === state.page ? "is-active" : ""}" data-page="${id}" role="tab" aria-selected="${id === state.page}">${escapeHtml(promptPageLabel(id, label))}</button>
   `).join("");
   $$("[data-group]", navigation).forEach((button) => button.addEventListener("click", () => {
     const group = NAVIGATION.find((item) => item.id === button.dataset.group);
@@ -2913,6 +2918,19 @@ function negativeKeywordEditor() {
 
 async function renderKeywords(token) {
   const root = $("#page-root");
+  if (promptOnlyScoring()) {
+    const defaults = state.settings.mlsys_prompt_default;
+    const system = configValue("mlsys_system_prompt", "") || defaults.system;
+    const user = configValue("mlsys_user_template", "") || defaults.user_template;
+    root.innerHTML = `<header class="page-header"><h1>${localeText("筛选 Prompt", "Screening Prompt")}</h1><p>${localeText("根据论文标题和摘要判断通用模型训练与推理的效率贡献。", "Evaluate general-purpose model training and inference efficiency from paper titles and abstracts.")}</p></header>${section(localeText("评分规则", "Screening rules"), `<p class="hint-text">${localeText("默认使用 v1.8。修改后需要保存，后续待处理论文将使用新的规则。", "The default is v1.8. Save your changes to apply new rules to pending papers.")}</p><label class="form-field"><span>${localeText("系统 Prompt", "System prompt")}</span><textarea data-field="mlsys_system_prompt" data-scope="config" rows="16">${escapeHtml(system)}</textarea></label><label class="form-field"><span>${localeText("论文输入模板", "Paper prompt template")}</span><p class="hint-text">${localeText("保留 {title} 和 {abstract}，运行时会自动填入论文标题与摘要。", "Keep {title} and {abstract}; they are filled with each paper’s title and abstract at runtime.")}</p><textarea data-field="mlsys_user_template" data-scope="config" rows="20">${escapeHtml(user)}</textarea></label><div class="action-row"><button id="mlsys-reset-prompt" class="secondary-button">${localeText("恢复 v1.8 默认 Prompt", "Restore the v1.8 default prompt")}</button></div>`, { icon: "📝" })}`;
+    bindCommon(root);
+    $("#mlsys-reset-prompt", root).addEventListener("click", () => {
+      for (const [key, value] of [["mlsys_system_prompt", defaults.system], ["mlsys_user_template", defaults.user_template]]) {
+        const input = $(`[data-field="${key}"]`, root); input.value = value; input.dispatchEvent(new Event("input", { bubbles: true })); input.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+    return;
+  }
   const context = escapeHtml(String(configValue("research_context", "") || ""));
   const editor = primaryKeywordEditor();
   const penaltiesEnabled = configValue("score_strategy", "core_relevance_v2") === "weighted_keyword_with_penalties_v1";
@@ -3162,11 +3180,12 @@ async function renderScoring(token) {
   const authorEditor = authorBonusEditor();
   const root = $("#page-root");
   const strategyFields = (value) => `${strategyDescription(value)}${strategyQualificationNotice(value)}${renderStrategyFields(value)}${legacyFormulaPreview(value)}`;
-  root.innerHTML = `${pageHeader()}${section("评价策略", `<p class="hint-text">选择论文如何获得资格，以及通过后如何排序。新配置建议使用核心相关性 V2。</p>${field({ label: "评分策略", key: "score_strategy", type: "select", choices: [{ value: "core_relevance_v2", label: "核心相关性 V2（推荐）" }, { value: "mlsys_single_model_v1", label: "MLSys 单模型 V1（实验）" }, { value: "legacy_weighted_keyword_v1", label: "加权关键词 V1（兼容）" }, { value: "weighted_keyword_with_penalties_v1", label: "加权关键词＋扣分 V1" }, { value: "learned_preference_v1", label: "偏好学习 V1（个性化）" }], fallback: "core_relevance_v2" })}<div id="scoring-strategy-fields">${strategyFields(strategy)}</div>`, { icon: "🧮" })}${divider()}${renderAuthorBonus(authorEditor)}`;
+  root.innerHTML = `${pageHeader()}${section("评价策略", `<p class="hint-text">选择论文的评分方式。MLSys 单模型使用筛选 Prompt 判断训练与推理效率贡献。</p>${field({ label: "评分策略", key: "score_strategy", type: "select", choices: [{ value: "core_relevance_v2", label: "核心相关性 V2（推荐）" }, { value: "mlsys_single_model_v1", label: "MLSys 单模型 V1" }, { value: "legacy_weighted_keyword_v1", label: "加权关键词 V1（兼容）" }, { value: "weighted_keyword_with_penalties_v1", label: "加权关键词＋扣分 V1" }, { value: "learned_preference_v1", label: "偏好学习 V1（个性化）" }], fallback: "core_relevance_v2" })}<div id="scoring-strategy-fields">${strategyFields(strategy)}</div>`, { icon: "🧮" })}${divider()}${renderAuthorBonus(authorEditor)}`;
   bindCommon(root);
   $('[data-field="score_strategy"]', root)?.addEventListener("change", (event) => {
     const host = $("#scoring-strategy-fields", root);
     if (!host) return;
+    renderNavigation();
     host.innerHTML = strategyFields(event.target.value);
     bindCommon(host);
     bindLegacyFormulaPreview(host, event.target.value);
@@ -3201,7 +3220,7 @@ async function renderScoring(token) {
 function strategyDescription(strategy) {
   const descriptions = {
     core_relevance_v2: "先由模型为每个关键词给出内容相关度。资格只看主关键词：按主关键词权重计算平均相关度，并且至少一个主关键词达到“强匹配”门槛；两项都满足才通过。通过后，参考关键词和收藏作者只用于排序，不能让无关论文获得资格。",
-    mlsys_single_model_v1: "使用单次模型判断，为 LLM/基础模型执行基础设施论文给出 0–13 分；达到独立配置的门槛后通过。实验策略，结果取决于提示词和模型。",
+    mlsys_single_model_v1: "使用筛选 Prompt 判断通用 LLM/基础模型训练与推理的效率贡献，给出 0–13 分；达到配置门槛后通过。",
     legacy_weighted_keyword_v1: "将主关键词和参考关键词的得分按权重累加，再叠加专家作者加分；总分达到“基础分 + 权重系数 × 全部关键词总权重”即通过。参考词和作者加分同时影响资格与排序，适合复现旧报告或临时回退，但可能放大非核心信号。",
     weighted_keyword_with_penalties_v1: "按加权关键词 V1 计算主关键词、参考关键词与作者加分，再按相关度和独立权重扣除不关注关键词。及格线仅由加分关键词权重决定。",
     learned_preference_v1: "以加权关键词 V1 为基础，再加入从喜欢/不喜欢和历史通过记录学习到的关键词、作者偏好。每个学习项先限幅再衰减，且已直接配置的关键词不会重复计算；但学习项仍会改变总分，因此也可能改变资格。适合个人化筛选，不适合严格复现基准结果。",

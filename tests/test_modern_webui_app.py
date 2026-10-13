@@ -720,7 +720,7 @@ class ModernWebUIAppTests(unittest.TestCase):
             "标题、摘要、TL;DR 或关键词": "Title, abstract, TL;DR, or keyword",
             "已配置；留空则保持不变": "Configured; leave blank to keep unchanged",
             "正在读取偏好词库…": "Loading preference data…",
-            "MLSys 单模型 V1（实验）": "MLSys Single Model V1 (Experimental)",
+            "MLSys 单模型 V1": "MLSys single model V1",
             "MLSys 单模型及格分（0–13）": "MLSys single-model passing score (0–13)",
         }
         for chinese, english in expected_translations.items():

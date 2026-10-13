@@ -1262,13 +1262,14 @@ class DailyResearchPipeline:
             logger.info(f"启用Reference提取: {settings.ENABLE_REFERENCE_EXTRACTION}")
 
             # ==================== 阶段2: 关键词准备 ====================
-            logger.info(">>> 阶段2: 准备关键词...")
+            logger.info(">>> 阶段2: 准备评分输入...")
 
             primary_keywords = getattr(settings, "PRIMARY_KEYWORDS", [])
             reference_extraction_enabled = bool(
                 getattr(settings, "ENABLE_REFERENCE_EXTRACTION", False)
             )
-            keyword_error = _keyword_configuration_error(
+            single_model = settings.normalized_score_strategy() == "mlsys_single_model_v1"
+            keyword_error = None if single_model else _keyword_configuration_error(
                 None, primary_keywords, reference_extraction_enabled
             )
             if keyword_error:
@@ -1287,13 +1288,17 @@ class DailyResearchPipeline:
                     store.fail_run(run_id, fail_result.error_message)
                 return fail_result
 
-            keyword_agent = KeywordAgent()
-            attach_health_recorder = getattr(keyword_agent, "set_health_recorder", None)
-            if callable(attach_health_recorder):
-                attach_health_recorder(llm_health_recorder)
-            all_keywords = keyword_agent.get_all_keywords()
+            if single_model:
+                all_keywords = {}
+                logger.info("MLSys 单模型评分：使用筛选 prompt，无需关键词或参考文献提取")
+            else:
+                keyword_agent = KeywordAgent()
+                attach_health_recorder = getattr(keyword_agent, "set_health_recorder", None)
+                if callable(attach_health_recorder):
+                    attach_health_recorder(llm_health_recorder)
+                all_keywords = keyword_agent.get_all_keywords()
 
-            keyword_error = _keyword_configuration_error(
+            keyword_error = None if single_model else _keyword_configuration_error(
                 all_keywords, primary_keywords, reference_extraction_enabled
             )
             if keyword_error:
@@ -1312,18 +1317,19 @@ class DailyResearchPipeline:
                     store.fail_run(run_id, fail_result.error_message)
                 return fail_result
 
-            logger.info("关键词准备完成:")
-            if bool(getattr(settings, "PRIMARY_KEYWORD_WEIGHTS_EXPLICIT", False)):
-                logger.info("  - 主要关键词: %d 个（使用独立权重）", len(settings.PRIMARY_KEYWORDS))
-            else:
-                logger.info(
-                    f"  - 主要关键词: {len(settings.PRIMARY_KEYWORDS)} 个（权重 {settings.PRIMARY_KEYWORD_WEIGHT}）"
-                )
-            if settings.ENABLE_REFERENCE_EXTRACTION:
-                ref_count = len(all_keywords) - len(settings.PRIMARY_KEYWORDS)
-                logger.info(f"  - Reference关键词: {ref_count} 个（权重 0.3-0.8）")
-            logger.info(f"  - 关键词总数: {len(all_keywords)} 个")
-            logger.info(f"  - 总权重: {sum(all_keywords.values()):.2f}")
+            if not single_model:
+                logger.info("关键词准备完成:")
+                if bool(getattr(settings, "PRIMARY_KEYWORD_WEIGHTS_EXPLICIT", False)):
+                    logger.info("  - 主要关键词: %d 个（使用独立权重）", len(settings.PRIMARY_KEYWORDS))
+                else:
+                    logger.info(
+                        f"  - 主要关键词: {len(settings.PRIMARY_KEYWORDS)} 个（权重 {settings.PRIMARY_KEYWORD_WEIGHT}）"
+                    )
+                if settings.ENABLE_REFERENCE_EXTRACTION:
+                    ref_count = len(all_keywords) - len(settings.PRIMARY_KEYWORDS)
+                    logger.info(f"  - Reference关键词: {ref_count} 个（权重 0.3-0.8）")
+                logger.info(f"  - 关键词总数: {len(all_keywords)} 个")
+                logger.info(f"  - 总权重: {sum(all_keywords.values()):.2f}")
 
             learned_terms = _load_learned_terms(store)
             if learned_terms:
@@ -1334,7 +1340,9 @@ class DailyResearchPipeline:
                 )
 
             total_weight = sum(all_keywords.values())
-            if settings.normalized_score_strategy() == "core_relevance_v2":
+            if single_model:
+                logger.info("  - MLSys 单模型及格分: %.1f", settings.MLSYS_SINGLE_MODEL_PASSING_SCORE)
+            elif settings.normalized_score_strategy() == "core_relevance_v2":
                 logger.info(
                     "  - V2 核心相关性门槛: %.1f；核心关键词强匹配门槛: %.1f",
                     settings.CORE_RELEVANCE_THRESHOLD,
