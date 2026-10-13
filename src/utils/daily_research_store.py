@@ -4581,6 +4581,9 @@ class DailyResearchStore:
                     "total_score": score.get("total_score"),
                     "is_qualified": score.get("is_qualified"),
                     "strategy_id": score.get("strategy_id"),
+                    "screening_prompt_version": score.get("screening_prompt_version"),
+                    "screening_model": score.get("screening_model"),
+                    "screening_origin": score.get("screening_origin"),
                     "tldr": score.get("tldr"),
                     "extracted_keywords": self._dedupe_display_strings(
                         score.get("extracted_keywords") or []
@@ -4663,6 +4666,9 @@ class DailyResearchStore:
             "total_score": representative.get("total_score"),
             "is_qualified": representative.get("is_qualified"),
             "strategy_id": representative.get("strategy_id"),
+            "screening_prompt_version": representative.get("screening_prompt_version"),
+            "screening_model": representative.get("screening_model"),
+            "screening_origin": representative.get("screening_origin"),
             "tldr": representative.get("tldr"),
             "extracted_keywords": self._decode_json_strings(
                 row["merged_keywords_json"]

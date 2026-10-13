@@ -46,7 +46,7 @@ async function main() {
     const pageErrors = [];
     const paperRequests = [];
     let dismissed = false;
-    const fixturePaper = { entity_id: "p1", paper_id: "p1", source: "arxiv", sources: ["arxiv"], title: "Demo inference optimization", total_score: null, is_qualified: true, authors: [], variants: [] };
+    const fixturePaper = { entity_id: "p1", paper_id: "p1", source: "arxiv", sources: ["arxiv"], title: "Demo inference optimization", screening_prompt_version: "1.8", screening_origin: "frozen_review", total_score: null, is_qualified: true, authors: [], variants: [] };
     page.on("pageerror", (error) => pageErrors.push(error.message));
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
