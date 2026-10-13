@@ -1,6 +1,6 @@
 # EuroSys 2026 MLSys Evaluation
 
-This historical experiment scrapes the full EuroSys 2026 accepted paper list, builds a frozen ground-truth label set from `Eurosys.md`, evaluates four OpenAI-compatible chat models with the earlier MLSys screening prompt, and writes reproducible artifacts to `data/experiments/eurosys_2026_mlsys_eval/<run_id>/`. The current daily screening runtime uses one `deepseek-reasoner` model and a narrower prompt; the saved metrics are not a direct comparison with that runtime.
+This historical experiment scrapes the full EuroSys 2026 accepted paper list, builds a frozen ground-truth label set from [Eurosys.md](Eurosys.md), evaluates four OpenAI-compatible chat models with the earlier MLSys screening prompt, and writes reproducible artifacts to `data/experiments/eurosys_2026_mlsys_eval/<run_id>/`. The current daily screening runtime uses one `deepseek-reasoner` model and a narrower prompt; the saved metrics are not a direct comparison with that runtime.
 
 ## Models
 The default model list is stored in `models.json`:

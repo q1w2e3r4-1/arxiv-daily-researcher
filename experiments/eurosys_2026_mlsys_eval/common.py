@@ -20,7 +20,7 @@ DATA_ROOT = REPO_ROOT / "data" / "experiments" / "eurosys_2026_mlsys_eval"
 REPORT_MD_DIR = REPO_ROOT / "data" / "reports" / "daily_research" / "markdown" / "eurosys_2026_eval"
 REPORT_HTML_DIR = REPO_ROOT / "data" / "reports" / "daily_research" / "html" / "eurosys_2026_eval"
 PROMPT_PATH = REPO_ROOT / "configs" / "templates" / "reports" / "mlsys_screening_prompt.json"
-EUROSYS_MD_PATH = REPO_ROOT / "Eurosys.md"
+EUROSYS_MD_PATH = EXP_ROOT / "Eurosys.md"
 MODELS_PATH = EXP_ROOT / "models.json"
 EUROSYS_PAPERS_URL = "https://2026.eurosys.org/papers.html"
 

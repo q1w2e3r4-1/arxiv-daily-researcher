@@ -74,7 +74,7 @@ LLM-42 本轮被排除的理由是摘要没有描述性能评测；模型已明�
 - 重复测试只覆盖 LMTracer 和 Bedrock。LMTracer 分数有变化，入选／排除结果保持一致。
 - CrystalLLM、Morphable Kernels、LLM-42 仍需人工确认，不能将其模型判定算作与人工一致。
 - 此次范围发生变化，不能把 v1.8 与 v1.9 的入选数差异直接解释成模型能力变化。
-- 默认模板：[mlsys_screening_prompt.json](configs/templates/reports/mlsys_screening_prompt.json)。v1.8 模板可追溯至 `b70b079`，v1.9 更新提交为 `e2040bf`。
+- 默认模板：[mlsys_screening_prompt.json](../../configs/templates/reports/mlsys_screening_prompt.json)。v1.8 模板可追溯至 `b70b079`，v1.9 更新提交为 `e2040bf`。
 
 冻结模板 SHA256：
 
