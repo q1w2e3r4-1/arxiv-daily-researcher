@@ -168,8 +168,8 @@ docker compose exec arxiv-daily-researcher python src/utils/setup_wizard.py
     <td align="center" width="50%"><a href="assets/webui_data_management_v4.png"><img src="assets/webui_data_management_v4.png" alt="Database backups and restore" width="100%" /></a><br /><b>Backup and sync</b><br /><sub>Database snapshots and recovery</sub></td>
   </tr>
   <tr>
-    <td align="center" width="50%"><a href="assets/webui_prompt_v1_8_zh.png"><img src="assets/webui_prompt_v1_8_zh.png" alt="MLSys screening prompt in Chinese" width="100%" /></a><br /><b>Screening Prompt</b><br /><sub>System rules and paper prompt template</sub></td>
-    <td align="center" width="50%"><a href="assets/webui_prompt_v1_8_en.png"><img src="assets/webui_prompt_v1_8_en.png" alt="MLSys screening prompt in English" width="100%" /></a><br /><b>English interface</b><br /><sub>Edit, save, and restore defaults</sub></td>
+    <td align="center" width="50%"><a href="assets/webui_prompt_v1_9_zh.png"><img src="assets/webui_prompt_v1_9_zh.png" alt="MLSys screening prompt in Chinese" width="100%" /></a><br /><b>Screening Prompt</b><br /><sub>System rules and paper prompt template</sub></td>
+    <td align="center" width="50%"><a href="assets/webui_prompt_v1_9_en.png"><img src="assets/webui_prompt_v1_9_en.png" alt="MLSys screening prompt in English" width="100%" /></a><br /><b>English interface</b><br /><sub>Edit, save, and restore defaults</sub></td>
   </tr>
 </table>
 
@@ -228,7 +228,7 @@ The repository also includes the `main.py` command-line entry point and GitHub A
 | Learned preferences V1 | Adjusts weighted scores using signals from likes, dislikes, and previously qualifying papers. |
 | MLSys single model V1 | Uses the MLSys screening prompt to produce a 0–13 score and rationale with one model. Papers pass at the configurable threshold. Intended for AI infrastructure topics. |
 
-With MLSys single model, **Screening Prompt** replaces the Keywords page and loads the v1.8 system rules and paper prompt template by default. Edit and save the prompts, or restore the defaults; keep `{title}` and `{abstract}` in the paper template. Scoring requires no keywords and skips reference-keyword extraction. Prompt changes invalidate pending score caches; existing reports retain their original scores.
+With MLSys single model, **Screening Prompt** replaces the Keywords page and loads the v1.9 system rules and paper prompt template by default. Edit and save the prompts, or restore the defaults; keep `{title}` and `{abstract}` in the paper template. The default rules prioritize reusable mechanisms that directly improve model or engine execution, excluding profiling tools and outer platform management as primary contributions. Relevant performance evaluation in the abstract is sufficient; numerical gains are not required. Scoring requires no keywords and skips reference-keyword extraction. Prompt changes invalidate pending score caches; existing reports retain their original scores.
 
 Selecting the penalty strategy shows unwanted keyword settings on the **Keywords** page. Each penalty weight ranges from 0 to 1; a primary keyword cannot also be a penalty term.
 
