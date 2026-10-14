@@ -311,6 +311,10 @@ class Settings(BaseSettings):
     LLM_RETRY_MAX_ATTEMPTS: int = 5  # 应用层最大尝试次数
     LLM_RETRY_MIN_WAIT: int = 5  # 应用层退避起始等待（秒）
     LLM_RETRY_MAX_WAIT: int = 120  # 应用层退避等待上限（秒）
+    LLM_ANALYSIS_FIRST_TOKEN_TIMEOUT_SECONDS: float = 180.0
+    LLM_ANALYSIS_IDLE_TIMEOUT_SECONDS: float = 120.0
+    LLM_ANALYSIS_TOTAL_TIMEOUT_SECONDS: float = 1200.0
+    LLM_ANALYSIS_INPUT_TOKEN_BUDGET: int = 196608
 
     # ==================== 报告配置 ====================
     ENABLE_HTML_REPORT: bool = True  # 是否同时生成HTML格式报告
@@ -962,6 +966,9 @@ class Settings(BaseSettings):
             # 加载 LLM 超时与重试配置
             if "llm" in config:
                 llm_cfg = config["llm"]
+                from utils.config_io import validate_config_document
+
+                validate_config_document({"llm": llm_cfg})
                 self.LLM_TIMEOUT_SECONDS = float(
                     llm_cfg.get("timeout_seconds", self.LLM_TIMEOUT_SECONDS)
                 )
@@ -977,6 +984,11 @@ class Settings(BaseSettings):
                 self.LLM_RETRY_MAX_WAIT = int(
                     llm_cfg.get("retry_max_wait", self.LLM_RETRY_MAX_WAIT)
                 )
+                for key in ("analysis_first_token_timeout_seconds", "analysis_idle_timeout_seconds",
+                            "analysis_total_timeout_seconds", "analysis_input_token_budget"):
+                    attr = "LLM_" + key.upper()
+                    value = llm_cfg.get(key, getattr(self, attr))
+                    setattr(self, attr, int(value) if key.endswith("budget") else float(value))
 
             # 加载报告设置
             if "report_settings" in config:

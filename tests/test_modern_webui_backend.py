@@ -421,6 +421,23 @@ class ModernBackendTests(unittest.TestCase):
         self.assertEqual(saved["mlsys_single_model_passing_score"], 8.0)
         self.assertEqual(saved["primary_keyword_entries"], current["primary_keyword_entries"])
 
+    def test_save_settings_round_trips_analysis_stream_limits(self) -> None:
+        updates = {
+            "llm_analysis_first_token_timeout_seconds": 90,
+            "llm_analysis_idle_timeout_seconds": 45,
+            "llm_analysis_total_timeout_seconds": 600,
+            "llm_analysis_input_token_budget": 65536,
+        }
+        with patch.object(backend, "flat_config", return_value={}), patch.object(
+            backend, "write_config_json"
+        ) as write, patch.object(backend, "_invalidate_runtime_caches"), patch.object(
+            backend, "read_env", return_value={}
+        ), patch.object(backend, "write_env"), patch.object(backend, "public_settings", return_value={}):
+            backend.save_settings(updates, {})
+        saved = flatten_config_dict(write.call_args.args[0])
+        for key, value in updates.items():
+            self.assertEqual(saved[key], value)
+
     def test_task_records_read_the_same_trigger_protocol(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             data_dir = Path(directory)

@@ -48,6 +48,8 @@ from utils.daily_research_store import (
 )
 from utils.llm_health import make_llm_health_recorder
 from utils.llm_resilience import is_retryable_llm_error
+from utils.llm_stream import is_deferred_llm_error
+from utils.paper_body import PaperInputTooLargeError
 from utils.daily_research_errors import PaperStageError, paper_stage_error
 from utils.daily_research_fingerprints import (
     build_score_audit_metadata,
@@ -493,6 +495,9 @@ def _deep_analyze_single_paper(paper_info, analysis_agent):
             last_error = RuntimeError("深度分析未返回结果")
         except Exception as exc:
             last_error = exc
+            if is_deferred_llm_error(exc) or isinstance(exc, PaperInputTooLargeError):
+                logger.warning("深度分析已释放处理位置，保留供后续重试: %s", exc)
+                break
             if not is_retryable_llm_error(exc):
                 # Auth, permission and schema errors repeat identically: the
                 # remaining attempts would only delay the same failure.
@@ -519,7 +524,7 @@ def _deep_analyze_single_paper(paper_info, analysis_agent):
 
     raise PaperStageError(
         "analysis",
-        f"深度分析在 {max_attempts} 次尝试后仍失败: {last_error}",
+        f"深度分析在 {attempt} 次尝试后失败，已保留供后续处理: {last_error}",
         cause=last_error,
     ) from last_error
 

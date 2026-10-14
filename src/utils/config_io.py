@@ -108,6 +108,21 @@ def validate_config_document(config: object) -> Dict[str, Any]:
     if not isinstance(config, dict):
         raise ValueError("config.json 根节点必须是 JSON 对象")
 
+    llm = config.get("llm", {})
+    if not isinstance(llm, dict):
+        raise ValueError("llm 配置段必须是对象")
+    for key, default, minimum, maximum in (
+        ("analysis_first_token_timeout_seconds", 180, 1, 3600),
+        ("analysis_idle_timeout_seconds", 120, 1, 3600),
+        ("analysis_total_timeout_seconds", 1200, 1, 7200),
+        ("analysis_input_token_budget", 196608, 1024, 1000000),
+    ):
+        value = llm.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not minimum <= value <= maximum:
+            raise ValueError(f"llm.{key} 必须在 {minimum}–{maximum} 之间")
+        if key.endswith("budget") and not isinstance(value, int):
+            raise ValueError(f"llm.{key} 必须是整数")
+
     for *section_path, field_name in _PROJECT_RELATIVE_PATH_FIELDS:
         current: object = config
         valid_parent = True
@@ -911,6 +926,10 @@ def build_config_dict(
     llm_retry_max_attempts: int = 5,
     llm_retry_min_wait: int = 5,
     llm_retry_max_wait: int = 120,
+    llm_analysis_first_token_timeout_seconds: float = 180.0,
+    llm_analysis_idle_timeout_seconds: float = 120.0,
+    llm_analysis_total_timeout_seconds: float = 1200.0,
+    llm_analysis_input_token_budget: int = 196608,
     daily_research_persistence_enabled: bool = True,
     daily_research_db_path: str = "data/daily_research/daily_research.db",
     daily_max_papers_per_run: int = 200,
@@ -1269,6 +1288,10 @@ def build_config_dict(
             "retry_max_attempts": llm_retry_max_attempts,
             "retry_min_wait": llm_retry_min_wait,
             "retry_max_wait": llm_retry_max_wait,
+            "analysis_first_token_timeout_seconds": llm_analysis_first_token_timeout_seconds,
+            "analysis_idle_timeout_seconds": llm_analysis_idle_timeout_seconds,
+            "analysis_total_timeout_seconds": llm_analysis_total_timeout_seconds,
+            "analysis_input_token_budget": llm_analysis_input_token_budget,
         },
         "daily_research": {
             "enable_deep_analysis": daily_enable_deep_analysis,
@@ -1698,6 +1721,10 @@ def flatten_config_dict(config: Dict[str, Any]) -> Dict[str, Any]:
     flat["llm_retry_max_attempts"] = llm.get("retry_max_attempts", 5)
     flat["llm_retry_min_wait"] = llm.get("retry_min_wait", 5)
     flat["llm_retry_max_wait"] = llm.get("retry_max_wait", 120)
+    flat["llm_analysis_first_token_timeout_seconds"] = llm.get("analysis_first_token_timeout_seconds", 180.0)
+    flat["llm_analysis_idle_timeout_seconds"] = llm.get("analysis_idle_timeout_seconds", 120.0)
+    flat["llm_analysis_total_timeout_seconds"] = llm.get("analysis_total_timeout_seconds", 1200.0)
+    flat["llm_analysis_input_token_budget"] = llm.get("analysis_input_token_budget", 196608)
 
     # Daily research
     dr = config.get("daily_research", {})

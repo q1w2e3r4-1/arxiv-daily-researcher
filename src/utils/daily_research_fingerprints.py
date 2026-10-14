@@ -256,15 +256,15 @@ def build_stage_input_fingerprints(
             "mode": settings.PDF_PARSER_MODE,
             "mineru_model_version": settings.MINERU_MODEL_VERSION,
             "fallback_to_abstract": True,
-            "content_limit_characters": 15000,
-            "pymupdf_page_limit": 20,
+            "body_selection": "body-v1",
+            "input_token_budget": settings.LLM_ANALYSIS_INPUT_TOKEN_BUDGET,
         },
         "model": _model_settings(settings.SMART_LLM, settings.SMART_LLM.temperature),
         "template": dict(deep_template),
         # v3 adds locally asserted PDF/abstract provenance and the optional
         # full-text TL;DR contract. Incomplete cache entries must be
         # regenerated so a fallback result can never masquerade as PDF-based.
-        "prompt_revision": "daily-deep-analysis-v3",
+        "prompt_revision": "daily-deep-analysis-v4",
     }
 
     return {

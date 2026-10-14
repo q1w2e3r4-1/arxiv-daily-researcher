@@ -15,6 +15,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_l
 from config import settings
 from parsers.mineru_parser import MineruParser
 from utils.llm_request_pool import call_chat_completion, call_responses
+from utils.llm_stream import call_bounded_stream, is_deferred_llm_error
+from utils.paper_body import select_paper_body, check_input_budget, PaperInputTooLargeError
 from utils.llm_resilience import (
     LLMEndpointCapabilityError,
     build_llm_client,
@@ -433,6 +435,7 @@ class AnalysisAgent:
         temperature: Optional[float],
         response_format: Optional[Dict[str, str]] = None,
         system_prompt: Optional[str] = None,
+        stream: bool = False,
     ) -> tuple[str, Any]:
         """Call the provider's supported endpoint without blind route fallback.
 
@@ -479,7 +482,8 @@ class AnalysisAgent:
 
         if not chat_is_unavailable:
             try:
-                response = call_chat_completion(client, **chat_kwargs)
+                response = (call_bounded_stream(client, **chat_kwargs) if stream
+                            else call_chat_completion(client, **chat_kwargs))
                 text = self._extract_chat_text(response)
                 if text:
                     record_endpoint_capability(base_url, "chat_completions", "supported")
@@ -526,7 +530,8 @@ class AnalysisAgent:
                 # ``response_format`` as ``text.format``.
                 response_kwargs["text"] = {"format": response_format}
             try:
-                response = call_responses(client, **response_kwargs)
+                response = (call_bounded_stream(client, endpoint="responses", **response_kwargs) if stream
+                            else call_responses(client, **response_kwargs))
                 text = self._extract_responses_text(response)
                 if text:
                     record_endpoint_capability(base_url, "responses", "supported")
@@ -552,7 +557,8 @@ class AnalysisAgent:
                     )
                 if minimal_response_kwargs != response_kwargs:
                     try:
-                        response = call_responses(client, **minimal_response_kwargs)
+                        response = (call_bounded_stream(client, endpoint="responses", **minimal_response_kwargs) if stream
+                                    else call_responses(client, **minimal_response_kwargs))
                         text = self._extract_responses_text(response)
                         if text:
                             record_endpoint_capability(base_url, "responses", "supported")
@@ -672,10 +678,9 @@ class AnalysisAgent:
     def _call_smart_llm(
         self, prompt: str, *, system_prompt: Optional[str] = None
     ) -> str:
-        """调用高性能LLM（JSON模式），带自动重试。"""
+        """Stream deep analysis once; the paper queue owns bounded retries."""
         estimated_prompt_tokens = len((system_prompt or "") + prompt) // 4
 
-        @llm_retry()
         def _do_call():
             try:
                 content, usage = self._call_llm_with_fallback(
@@ -685,6 +690,7 @@ class AnalysisAgent:
                     settings.SMART_LLM.temperature,
                     {"type": "json_object"},
                     system_prompt,
+                    stream=True,
                 )
             except Exception:
                 if settings.TOKEN_TRACKING_ENABLED:
@@ -1684,12 +1690,21 @@ class AnalysisAgent:
             str(prompts_config.get("field_output_format", "使用JSON格式输出。")).strip()
         )
         system_prompt = "\n\n".join(part for part in stable_parts if part)
+        body, input_metadata = select_paper_body(pdf_text)
+        if content_source != CONTENT_SOURCE_PDF:
+            input_metadata["input_scope"] = "abstract"
         prompt = f"""论文标题: {title}
 
 论文内容:
-{pdf_text[:15000]}"""
+{body}"""
 
         try:
+            input_metadata["input_token_upper_estimate"] = check_input_budget(
+                system_prompt, prompt, settings.LLM_ANALYSIS_INPUT_TOKEN_BUDGET
+            )
+            logger.info("深度分析输入：原文 %s 字符，发送 %s 字符，移除尾部=%s",
+                        input_metadata["original_chars"], input_metadata["sent_chars"],
+                        input_metadata["removed_tail_section"] or "未识别")
             content = self._call_smart_llm(prompt, system_prompt=system_prompt)
             content = self._clean_json_string(content)
 
@@ -1704,13 +1719,15 @@ class AnalysisAgent:
             # Override any provider-supplied metadata after validation. This
             # is a provenance assertion about locally observed PDF parsing,
             # not an LLM claim.
-            result[ANALYSIS_META_KEY] = {CONTENT_SOURCE_KEY: content_source}
+            result[ANALYSIS_META_KEY] = {CONTENT_SOURCE_KEY: content_source, **input_metadata}
 
             logger.info(f"深度分析完成 [{title[:50]}]")
             return result
 
         except Exception as e:
             logger.error(f"深度分析失败 [{title[:50]}]: {e}")
+            if is_deferred_llm_error(e) or isinstance(e, PaperInputTooLargeError):
+                raise
             # Auth, permission and schema errors repeat identically on every
             # attempt.  Reporting them as ``None`` made callers retry the whole
             # paper (including its download) instead of failing fast.
@@ -1786,14 +1803,10 @@ class AnalysisAgent:
             with open(temp_pdf, "wb") as f:
                 f.write(pdf_bytes)
 
-            # 解析PDF（前20页），使用 try/finally 确保资源释放和临时文件清理
+            # Extract all pages; body selection removes the reference/appendix tail.
             try:
                 with fitz.open(temp_pdf) as doc:
-                    text = ""
-                    for i, page in enumerate(doc):
-                        if i >= 20:  # 只读前20页
-                            break
-                        text += page.get_text()
+                    text = "\n\f\n".join(page.get_text() for page in doc)
             finally:
                 # 无论解析成功与否均清理临时文件
                 if temp_pdf.exists():

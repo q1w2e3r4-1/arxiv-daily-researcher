@@ -12,7 +12,7 @@ import openai
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from config import Settings  # noqa: E402
-from utils.config_io import build_config_dict, flatten_config_dict  # noqa: E402
+from utils.config_io import build_config_dict, flatten_config_dict, validate_config_document  # noqa: E402
 from utils.llm_resilience import (  # noqa: E402
     build_llm_client,
     is_retryable_llm_error,
@@ -119,7 +119,11 @@ class LLMConfigRoundTripTests(unittest.TestCase):
                     sdk_max_retries: 0,
                     retry_max_attempts: 4,
                     retry_min_wait: 8,
-                    retry_max_wait: 90
+                    retry_max_wait: 90,
+                    analysis_first_token_timeout_seconds: 90,
+                    analysis_idle_timeout_seconds: 45,
+                    analysis_total_timeout_seconds: 600,
+                    analysis_input_token_budget: 65536
                   }
                 }
                 """,
@@ -132,6 +136,15 @@ class LLMConfigRoundTripTests(unittest.TestCase):
             self.assertEqual(settings.LLM_RETRY_MAX_ATTEMPTS, 4)
             self.assertEqual(settings.LLM_RETRY_MIN_WAIT, 8)
             self.assertEqual(settings.LLM_RETRY_MAX_WAIT, 90)
+            self.assertEqual(settings.LLM_ANALYSIS_FIRST_TOKEN_TIMEOUT_SECONDS, 90)
+            self.assertEqual(settings.LLM_ANALYSIS_IDLE_TIMEOUT_SECONDS, 45)
+            self.assertEqual(settings.LLM_ANALYSIS_TOTAL_TIMEOUT_SECONDS, 600)
+            self.assertEqual(settings.LLM_ANALYSIS_INPUT_TOKEN_BUDGET, 65536)
+
+    def test_stream_limits_reject_zero_nonfinite_and_boolean_values(self):
+        for value in (0, -1, float("nan"), float("inf"), True, "120"):
+            with self.assertRaises(ValueError):
+                validate_config_document({"llm": {"analysis_idle_timeout_seconds": value}})
 
     def test_defaults_when_llm_section_missing(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -161,6 +174,10 @@ class LLMConfigRoundTripTests(unittest.TestCase):
                 "retry_max_attempts": 6,
                 "retry_min_wait": 4,
                 "retry_max_wait": 75,
+                "analysis_first_token_timeout_seconds": 180.0,
+                "analysis_idle_timeout_seconds": 120.0,
+                "analysis_total_timeout_seconds": 1200.0,
+                "analysis_input_token_budget": 196608,
             },
         )
 

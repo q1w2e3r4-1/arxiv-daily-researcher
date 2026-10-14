@@ -221,7 +221,12 @@
     "sdk_max_retries": 1,
     "retry_max_attempts": 5,
     "retry_min_wait": 5,
-    "retry_max_wait": 120
+    "retry_max_wait": 120,
+    "analysis_first_token_timeout_seconds": 180,
+    "analysis_idle_timeout_seconds": 120,
+    "analysis_total_timeout_seconds": 1200,
+    // Conservative input budget; reserve reasoning/output space in your model.
+    "analysis_input_token_budget": 196608
   },
   "daily_research": {
     "enable_deep_analysis": true,
