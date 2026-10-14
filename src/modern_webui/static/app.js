@@ -2787,7 +2787,6 @@ function reportMarkdown(value) {
 function paperAnalysisMarkup(analysis) {
   if (!analysis || typeof analysis !== "object" || Array.isArray(analysis)) return "";
   const labels = {
-    full_text_tldr: localeText("中文 TL;DR", "Chinese TL;DR"),
     summary: localeText("背景与问题", "Background and problem"),
     innovations: localeText("关键观察与挑战", "Observations and challenges"),
     methodology: localeText("核心思路与设计", "Approach and design"),
@@ -2798,10 +2797,9 @@ function paperAnalysisMarkup(analysis) {
   };
   const keys = [...Object.keys(labels), ...Object.keys(analysis).filter(key => !Object.hasOwn(labels, key))];
   const sections = keys.filter(key => !key.startsWith("__") && key !== "chinese_title"
-    && key !== "editorial_review" && analysis[key] != null
+    && key !== "editorial_review" && key !== "full_text_tldr" && analysis[key] != null
     && (typeof analysis[key] !== "string" || analysis[key].trim())
-    && (!Array.isArray(analysis[key]) || analysis[key].length)
-    && (key !== "full_text_tldr" || analysis.__meta?.content_source === "pdf"))
+    && (!Array.isArray(analysis[key]) || analysis[key].length))
     .map(key => `<section class="analysis-section"><h5>${escapeHtml(labels[key] || key)}</h5><div translate="no">${reportMarkdown(analysis[key])}</div></section>`).join("");
   if (!sections) return "";
   const fallback = analysis.__meta?.content_source === "abstract_fallback";
@@ -2824,10 +2822,20 @@ function sourceVariantCard(variant) {
   const url = safeExternalUrl(variant.url);
   const pdfUrl = safeExternalUrl(variant.pdf_url);
   const analysis = paperAnalysisMarkup(variant.analysis);
-  return `<article class="paper-variant"><h4>${escapeHtml(variant.source || "—")} · ${escapeHtml(formatTime(variant.completed_at) || localeText("未完成", "Incomplete"))}</h4>${statuses ? `<p class="muted">${escapeHtml(statuses)}</p>` : ""}${variant.tldr ? `<p><strong>TL;DR：</strong>${escapeHtml(variant.tldr)}</p>` : ""}${variant.abstract_cn ? `<p><strong>中文摘要：</strong>${escapeHtml(variant.abstract_cn)}</p>` : ""}${variant.extracted_keywords?.length ? `<p><strong>关键词：</strong>${escapeHtml(variant.extracted_keywords.join(" · "))}</p>` : ""}${analysis}${variant.last_error ? `<p class="error-message">${escapeHtml(localeText("问题：", "Issue: "))}${escapeHtml(variant.last_error)}</p>` : ""}${url || pdfUrl ? `<p>${url ? `<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">论文页面</a>` : ""}${url && pdfUrl ? " · " : ""}${pdfUrl ? `<a href="${escapeAttribute(pdfUrl)}" target="_blank" rel="noopener noreferrer">PDF</a>` : ""}</p>` : ""}${variant.report_path ? `<p class="muted">${escapeHtml(localeText("报告路径：", "Report path: "))}${escapeHtml(variant.report_path)}</p>` : ""}</article>`;
+  return `<article class="paper-variant"><h4>${escapeHtml(variant.source || "—")} · ${escapeHtml(formatTime(variant.completed_at) || localeText("未完成", "Incomplete"))}</h4>${statuses ? `<p class="muted">${escapeHtml(statuses)}</p>` : ""}${variant.abstract_cn ? `<p><strong>中文摘要：</strong>${escapeHtml(variant.abstract_cn)}</p>` : ""}${variant.extracted_keywords?.length ? `<p><strong>关键词：</strong>${escapeHtml(variant.extracted_keywords.join(" · "))}</p>` : ""}${analysis}${variant.last_error ? `<p class="error-message">${escapeHtml(localeText("问题：", "Issue: "))}${escapeHtml(variant.last_error)}</p>` : ""}${url || pdfUrl ? `<p>${url ? `<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">论文页面</a>` : ""}${url && pdfUrl ? " · " : ""}${pdfUrl ? `<a href="${escapeAttribute(pdfUrl)}" target="_blank" rel="noopener noreferrer">PDF</a>` : ""}</p>` : ""}${variant.report_path ? `<p class="muted">${escapeHtml(localeText("报告路径：", "Report path: "))}${escapeHtml(variant.report_path)}</p>` : ""}</article>`;
+}
+
+function paperTldr(item) {
+  const variants = item.variants || [];
+  const preferred = variants.filter(variant => variant.source === item.source && variant.paper_id === item.paper_id);
+  const ordered = [...preferred, ...variants.filter(variant => !preferred.includes(variant))];
+  const fullText = ordered.find(variant => variant.analysis?.__meta?.content_source === "pdf"
+    && typeof variant.analysis.full_text_tldr === "string" && variant.analysis.full_text_tldr.trim());
+  return fullText?.analysis.full_text_tldr || item.tldr || ordered.find(variant => variant.tldr)?.tldr || "";
 }
 
 function paperCard(item) {
+  const tldr = paperTldr(item);
   const score = item.total_score !== null && item.total_score !== undefined && item.total_score !== "" && Number.isFinite(Number(item.total_score)) ? Number(item.total_score).toFixed(1) : "—";
   const badge = item.is_qualified === true ? "🟢" : item.is_qualified === false ? "⚪" : "·";
   const sources = (item.sources || [item.source]).filter(Boolean).join(", ");
@@ -2843,7 +2851,7 @@ function paperCard(item) {
   ].filter(Boolean).join(" ｜ ");
   const variants = (item.variants || []).map(sourceVariantCard).join("");
   const hasPdfAnalysis = (item.variants || []).some(variant => variant.analysis?.__meta?.content_source === "pdf");
-  return `<details class="paper-card"><summary><span class="score-pill">${score}</span><strong>${badge} ${escapeHtml(item.title)}${preference}</strong><small>${escapeHtml(metadata)}</small></summary><div class="paper-content">${item.screening_origin === "frozen_review" && !hasPdfAnalysis ? `<p class="hint-text">${localeText("这是标题/摘要复评结果，不代表已完成 PDF 全文分析。", "This is a title/abstract review; it does not imply completed full-text PDF analysis.")}</p>` : ""}<div class="action-row"><button class="secondary-button compact-button" data-paper-preference="like">${localeText(item.preference === "like" ? "取消收藏" : "👍 收藏", item.preference === "like" ? "Unfavorite" : "👍 Favorite")}</button><button class="secondary-button compact-button" data-paper-preference="dislike">${localeText("👎 不感兴趣", "👎 Not interested")}</button></div>${item.authors?.length ? `<p><strong>作者：</strong>${escapeHtml(item.authors.slice(0, 12).join(", "))}</p>` : ""}${item.tldr ? `<p><strong>TL;DR：</strong>${escapeHtml(item.tldr)}</p>` : ""}${(item.merged_keywords || item.extracted_keywords)?.length ? `<p><strong>合并关键词：</strong>${escapeHtml((item.merged_keywords || item.extracted_keywords).join(" · "))}</p>` : ""}${item.categories?.length ? `<p class="muted">${escapeHtml(localeText("分类：", "Categories: "))}${escapeHtml(item.categories.join(" "))}</p>` : ""}${url || pdfUrl ? `<p>${url ? `<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">arXiv / 论文页面</a>` : ""}${url && pdfUrl ? " ｜ " : ""}${pdfUrl ? `<a href="${escapeAttribute(pdfUrl)}" target="_blank" rel="noopener noreferrer">PDF</a>` : ""}</p>` : ""}${variants ? `<div class="paper-variants"><h3>来源变体</h3>${variants}</div>` : ""}</div></details>`;
+  return `<details class="paper-card"><summary><span class="score-pill">${score}</span><strong>${badge} ${escapeHtml(item.title)}${preference}</strong><small>${escapeHtml(metadata)}</small></summary><div class="paper-content">${item.screening_origin === "frozen_review" && !hasPdfAnalysis ? `<p class="hint-text">${localeText("这是标题/摘要复评结果，不代表已完成 PDF 全文分析。", "This is a title/abstract review; it does not imply completed full-text PDF analysis.")}</p>` : ""}<div class="action-row"><button class="secondary-button compact-button" data-paper-preference="like">${localeText(item.preference === "like" ? "取消收藏" : "👍 收藏", item.preference === "like" ? "Unfavorite" : "👍 Favorite")}</button><button class="secondary-button compact-button" data-paper-preference="dislike">${localeText("👎 不感兴趣", "👎 Not interested")}</button></div>${item.authors?.length ? `<p><strong>作者：</strong>${escapeHtml(item.authors.slice(0, 12).join(", "))}</p>` : ""}${tldr ? `<p class="paper-tldr" translate="no"><strong>TL;DR：</strong>${escapeHtml(tldr)}</p>` : ""}${(item.merged_keywords || item.extracted_keywords)?.length ? `<p><strong>合并关键词：</strong>${escapeHtml((item.merged_keywords || item.extracted_keywords).join(" · "))}</p>` : ""}${item.categories?.length ? `<p class="muted">${escapeHtml(localeText("分类：", "Categories: "))}${escapeHtml(item.categories.join(" "))}</p>` : ""}${url || pdfUrl ? `<p>${url ? `<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">arXiv / 论文页面</a>` : ""}${url && pdfUrl ? " ｜ " : ""}${pdfUrl ? `<a href="${escapeAttribute(pdfUrl)}" target="_blank" rel="noopener noreferrer">PDF</a>` : ""}</p>` : ""}${variants ? `<div class="paper-variants"><h3>来源变体</h3>${variants}</div>` : ""}</div></details>`;
 }
 
 async function renderPaperSearch(token) {

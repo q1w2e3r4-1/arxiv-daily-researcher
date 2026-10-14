@@ -57,7 +57,7 @@ async function main() {
       key_results: "演示评测围绕缓存占用与响应速度展开，结果说明系统设计如何缓解前述瓶颈。此处不提供虚构的性能数字。",
       __meta: { content_source: "pdf", private_marker: "not-for-display" },
     };
-    const fixturePaper = { entity_id: "p1", paper_id: "p1", source: "arxiv", sources: ["arxiv"], title: "Demo inference optimization", screening_prompt_version: "1.8", screening_origin: "frozen_review", total_score: null, is_qualified: true, authors: [], variants: [{ source: "arxiv", analysis_status: "succeeded", analysis: fixtureAnalysis }] };
+    const fixturePaper = { entity_id: "p1", paper_id: "p1", source: "arxiv", sources: ["arxiv"], title: "Demo inference optimization", screening_prompt_version: "1.8", screening_origin: "frozen_review", total_score: null, is_qualified: true, authors: [], tldr: "Legacy scoring TLDR", variants: [{ source: "arxiv", tldr: "Legacy variant TLDR", analysis_status: "succeeded", analysis: fixtureAnalysis }] };
     page.on("pageerror", (error) => pageErrors.push(error.message));
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
@@ -105,7 +105,9 @@ async function main() {
     assert.equal(windowQuery.get("qualified_only"), "true");
     assert(windowQuery.get("completed_from"));
     await page.locator(".paper-card > summary").click();
-    assert.equal(await page.locator(".analysis-section").count(), 5);
+    assert.equal(await page.locator(".analysis-section").count(), 4);
+    assert.equal(await page.locator(".paper-tldr").count(), 1);
+    assert(!(await page.locator(".paper-content").textContent()).includes("Legacy"));
     assert.equal(await page.locator(".analysis-section ol").count(), 2);
     assert.match(await page.locator(".analysis-section strong").first().textContent(), /重复内容/);
     assert.equal(await page.locator(".paper-analysis pre").count(), 0);
@@ -136,8 +138,10 @@ async function main() {
     await page.locator(".paper-card").waitFor();
     assert.equal(await page.locator(".paper-card").count(), 1);
     await page.locator(".paper-card > summary").click();
-    assert.equal(await page.locator(".analysis-section").count(), 5);
-    assert.match(await page.locator(".analysis-section h5").nth(2).textContent(), /Observations/);
+    assert.equal(await page.locator(".analysis-section").count(), 4);
+    assert.equal(await page.locator(".paper-tldr").count(), 1);
+    assert(!(await page.locator(".paper-content").textContent()).includes("Legacy"));
+    assert.match(await page.locator(".analysis-section h5").nth(1).textContent(), /Observations/);
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2));
     await page.setViewportSize({ width: 1280, height: 900 });
 
@@ -156,6 +160,9 @@ async function main() {
     assert.match(await page.locator(".analysis-report").textContent(), /Other stored analysis/);
     assert(!(await page.locator(".analysis-report").textContent()).includes("Must not show"));
     assert.equal(await page.evaluate(() => window.reportInjection), undefined);
+
+    assert.equal(await page.evaluate(() => paperTldr({tldr: "Scoring fallback", variants: [{analysis: {full_text_tldr: "Untrusted", __meta: {content_source: "abstract_fallback"}}}]})), "Scoring fallback");
+    assert.equal(await page.evaluate(() => paperTldr({source: "acm", paper_id: "preferred", variants: [{source: "arxiv", analysis: {full_text_tldr: "Other", __meta: {content_source: "pdf"}}}, {source: "acm", paper_id: "preferred", analysis: {full_text_tldr: "Preferred", __meta: {content_source: "pdf"}}}]})), "Preferred");
 
     await page.goto(`${base}/#configuration/advanced`);
     const idleField = page.locator('[data-field="llm_analysis_idle_timeout_seconds"]');
