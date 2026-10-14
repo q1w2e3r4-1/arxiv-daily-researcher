@@ -988,7 +988,7 @@ function localizeRoot(root = document) {
   const walker = document.createTreeWalker(rootNode, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
-      if (!parent || !node.nodeValue?.trim() || parent.closest("script, style, pre, code, textarea")) {
+      if (!parent || !node.nodeValue?.trim() || parent.closest('script, style, pre, code, textarea, [translate="no"]')) {
         return NodeFilter.FILTER_REJECT;
       }
       return NodeFilter.FILTER_ACCEPT;
@@ -2752,6 +2752,67 @@ function searchParamsFromState() {
   return params;
 }
 
+// Restricted report Markdown: escape first, then add only our own markup.
+// Model output never supplies HTML, URLs or attributes to the page.
+function reportInline(value) {
+  return escapeHtml(value).replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+}
+
+function reportMarkdown(value) {
+  if (Array.isArray(value)) return `<ul>${value.map(item => `<li>${reportMarkdown(item)}</li>`).join("")}</ul>`;
+  if (value && typeof value === "object") return Object.entries(value).map(([key, text]) =>
+    `<p><strong>${escapeHtml(key)}</strong></p>${reportMarkdown(text)}`).join("");
+  const lines = String(value ?? "").replace(/\r\n?/g, "\n").split("\n");
+  let result = "", paragraph = [], list = "";
+  const flush = () => { if (paragraph.length) { result += `<p>${paragraph.join("<br>")}</p>`; paragraph = []; } };
+  const closeList = () => { if (list) { result += `</${list}>`; list = ""; } };
+  for (const line of lines) {
+    if (!line.trim()) { flush(); continue; }
+    const match = line.match(/^\s*(?:(\d+)[.)、]\s+|[-*•]\s+)(.*)$/);
+    if (match) {
+      flush();
+      const kind = match[1] ? "ol" : "ul";
+      if (list !== kind) { closeList(); result += `<${kind}>`; list = kind; }
+      result += `<li>${reportInline(match[2])}</li>`;
+    } else {
+      closeList();
+      paragraph.push(reportInline(line.replace(/^#{1,6}\s+/, "")));
+    }
+  }
+  flush(); closeList();
+  return result;
+}
+
+function paperAnalysisMarkup(analysis) {
+  if (!analysis || typeof analysis !== "object" || Array.isArray(analysis)) return "";
+  const labels = {
+    full_text_tldr: localeText("中文 TL;DR", "Chinese TL;DR"),
+    summary: localeText("背景与问题", "Background and problem"),
+    innovations: localeText("关键观察与挑战", "Observations and challenges"),
+    methodology: localeText("核心思路与设计", "Approach and design"),
+    key_results: localeText("结果与总结", "Results and conclusion"),
+    tech_stack: localeText("技术栈", "Technology stack"),
+    strengths: localeText("优点", "Strengths"), weaknesses: localeText("不足", "Weaknesses"),
+    custom_answers: localeText("自定义问题", "Custom questions"),
+  };
+  const keys = [...Object.keys(labels), ...Object.keys(analysis).filter(key => !Object.hasOwn(labels, key))];
+  const sections = keys.filter(key => !key.startsWith("__") && key !== "chinese_title"
+    && key !== "editorial_review" && analysis[key] != null
+    && (typeof analysis[key] !== "string" || analysis[key].trim())
+    && (!Array.isArray(analysis[key]) || analysis[key].length)
+    && (key !== "full_text_tldr" || analysis.__meta?.content_source === "pdf"))
+    .map(key => `<section class="analysis-section"><h5>${escapeHtml(labels[key] || key)}</h5><div translate="no">${reportMarkdown(analysis[key])}</div></section>`).join("");
+  if (!sections) return "";
+  const fallback = analysis.__meta?.content_source === "abstract_fallback";
+  const provenance = fallback ? localeText("基于摘要，未获得 PDF 正文", "Based on abstract; PDF text unavailable")
+    : analysis.__meta?.content_source === "pdf" ? localeText("基于 PDF 正文", "Based on PDF text")
+    : localeText("历史分析，正文来源未记录", "Historical analysis; text provenance not recorded");
+  return `<details class="paper-analysis" open><summary>${localeText("论文阅读报告", "Paper reading report")}</summary>
+    <div class="analysis-report">${analysis.chinese_title ? `<h4 class="analysis-title" translate="no">${escapeHtml(analysis.chinese_title)}</h4>` : ""}
+    <p class="muted analysis-provenance">${escapeHtml(provenance)}</p>${sections}</div></details>`;
+}
+
 function sourceVariantCard(variant) {
   const statuses = [
     variant.strategy_id ? localeText(`策略：${variant.strategy_id}`, `Strategy: ${variant.strategy_id}`) : "",
@@ -2762,9 +2823,7 @@ function sourceVariantCard(variant) {
   ].filter(Boolean).join(" · ");
   const url = safeExternalUrl(variant.url);
   const pdfUrl = safeExternalUrl(variant.pdf_url);
-  const analysis = variant.analysis && typeof variant.analysis === "object" && Object.keys(variant.analysis).length
-    ? `<details class="paper-analysis"><summary>深度分析</summary><pre>${escapeHtml(JSON.stringify(variant.analysis, null, 2))}</pre></details>`
-    : "";
+  const analysis = paperAnalysisMarkup(variant.analysis);
   return `<article class="paper-variant"><h4>${escapeHtml(variant.source || "—")} · ${escapeHtml(formatTime(variant.completed_at) || localeText("未完成", "Incomplete"))}</h4>${statuses ? `<p class="muted">${escapeHtml(statuses)}</p>` : ""}${variant.tldr ? `<p><strong>TL;DR：</strong>${escapeHtml(variant.tldr)}</p>` : ""}${variant.abstract_cn ? `<p><strong>中文摘要：</strong>${escapeHtml(variant.abstract_cn)}</p>` : ""}${variant.extracted_keywords?.length ? `<p><strong>关键词：</strong>${escapeHtml(variant.extracted_keywords.join(" · "))}</p>` : ""}${analysis}${variant.last_error ? `<p class="error-message">${escapeHtml(localeText("问题：", "Issue: "))}${escapeHtml(variant.last_error)}</p>` : ""}${url || pdfUrl ? `<p>${url ? `<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">论文页面</a>` : ""}${url && pdfUrl ? " · " : ""}${pdfUrl ? `<a href="${escapeAttribute(pdfUrl)}" target="_blank" rel="noopener noreferrer">PDF</a>` : ""}</p>` : ""}${variant.report_path ? `<p class="muted">${escapeHtml(localeText("报告路径：", "Report path: "))}${escapeHtml(variant.report_path)}</p>` : ""}</article>`;
 }
 
@@ -2783,7 +2842,8 @@ function paperCard(item) {
     item.strategy_id ? localeText(`策略：${item.strategy_id}`, `Strategy: ${item.strategy_id}`) : "",
   ].filter(Boolean).join(" ｜ ");
   const variants = (item.variants || []).map(sourceVariantCard).join("");
-  return `<details class="paper-card"><summary><span class="score-pill">${score}</span><strong>${badge} ${escapeHtml(item.title)}${preference}</strong><small>${escapeHtml(metadata)}</small></summary><div class="paper-content">${item.screening_origin === "frozen_review" ? `<p class="hint-text">${localeText("这是标题/摘要复评结果，不代表已完成 PDF 全文分析。", "This is a title/abstract review; it does not imply completed full-text PDF analysis.")}</p>` : ""}<div class="action-row"><button class="secondary-button compact-button" data-paper-preference="like">${localeText(item.preference === "like" ? "取消收藏" : "👍 收藏", item.preference === "like" ? "Unfavorite" : "👍 Favorite")}</button><button class="secondary-button compact-button" data-paper-preference="dislike">${localeText("👎 不感兴趣", "👎 Not interested")}</button></div>${item.authors?.length ? `<p><strong>作者：</strong>${escapeHtml(item.authors.slice(0, 12).join(", "))}</p>` : ""}${item.tldr ? `<p><strong>TL;DR：</strong>${escapeHtml(item.tldr)}</p>` : ""}${(item.merged_keywords || item.extracted_keywords)?.length ? `<p><strong>合并关键词：</strong>${escapeHtml((item.merged_keywords || item.extracted_keywords).join(" · "))}</p>` : ""}${item.categories?.length ? `<p class="muted">${escapeHtml(localeText("分类：", "Categories: "))}${escapeHtml(item.categories.join(" "))}</p>` : ""}${url || pdfUrl ? `<p>${url ? `<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">arXiv / 论文页面</a>` : ""}${url && pdfUrl ? " ｜ " : ""}${pdfUrl ? `<a href="${escapeAttribute(pdfUrl)}" target="_blank" rel="noopener noreferrer">PDF</a>` : ""}</p>` : ""}${variants ? `<div class="paper-variants"><h3>来源变体</h3>${variants}</div>` : ""}</div></details>`;
+  const hasPdfAnalysis = (item.variants || []).some(variant => variant.analysis?.__meta?.content_source === "pdf");
+  return `<details class="paper-card"><summary><span class="score-pill">${score}</span><strong>${badge} ${escapeHtml(item.title)}${preference}</strong><small>${escapeHtml(metadata)}</small></summary><div class="paper-content">${item.screening_origin === "frozen_review" && !hasPdfAnalysis ? `<p class="hint-text">${localeText("这是标题/摘要复评结果，不代表已完成 PDF 全文分析。", "This is a title/abstract review; it does not imply completed full-text PDF analysis.")}</p>` : ""}<div class="action-row"><button class="secondary-button compact-button" data-paper-preference="like">${localeText(item.preference === "like" ? "取消收藏" : "👍 收藏", item.preference === "like" ? "Unfavorite" : "👍 Favorite")}</button><button class="secondary-button compact-button" data-paper-preference="dislike">${localeText("👎 不感兴趣", "👎 Not interested")}</button></div>${item.authors?.length ? `<p><strong>作者：</strong>${escapeHtml(item.authors.slice(0, 12).join(", "))}</p>` : ""}${item.tldr ? `<p><strong>TL;DR：</strong>${escapeHtml(item.tldr)}</p>` : ""}${(item.merged_keywords || item.extracted_keywords)?.length ? `<p><strong>合并关键词：</strong>${escapeHtml((item.merged_keywords || item.extracted_keywords).join(" · "))}</p>` : ""}${item.categories?.length ? `<p class="muted">${escapeHtml(localeText("分类：", "Categories: "))}${escapeHtml(item.categories.join(" "))}</p>` : ""}${url || pdfUrl ? `<p>${url ? `<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">arXiv / 论文页面</a>` : ""}${url && pdfUrl ? " ｜ " : ""}${pdfUrl ? `<a href="${escapeAttribute(pdfUrl)}" target="_blank" rel="noopener noreferrer">PDF</a>` : ""}</p>` : ""}${variants ? `<div class="paper-variants"><h3>来源变体</h3>${variants}</div>` : ""}</div></details>`;
 }
 
 async function renderPaperSearch(token) {
@@ -3645,6 +3705,8 @@ function renderAdvanced() {
   ].join("")}</div>`, { icon: "📄", className: "advanced-settings-card" });
   const concurrency = section("并发设置", `<p class="hint-text">LLM 评分的并行处理，注意 API 速率限制。</p><div class="form-grid two">${field({ label: "启用并发处理", key: "concurrency_enabled", type: "checkbox", fallback: false })}${field({ label: "工作线程数", key: "concurrency_workers", type: "number", min: 1, max: 10, fallback: 3, help: "推荐：3–5，过高可能触发速率限制。" })}</div>`, { icon: "⚡" });
   const requestPool = section("LLM 请求池", `<p class="hint-text">全局限制 LLM 请求速率，避免并发任务触发 API 限流。</p><div class="form-grid three">${field({ label: "启用 LLM 请求池", key: "llm_request_pool_enabled", type: "checkbox", fallback: true })}${field({ label: "每分钟请求数", key: "llm_requests_per_minute", type: "number", min: 1, max: 600, fallback: 30 })}${field({ label: "慢等待日志阈值（秒）", key: "llm_request_pool_log_slow_wait_seconds", type: "number", min: 0, max: 120, step: 0.5, fallback: 5 })}</div>`, { icon: "🚦" });
+  const analysisBounds = section(localeText("深度分析等待与输入", "Deep analysis time and input limits"),
+    `<p class="hint-text">${localeText("流式接收推理与回答；超限论文保留供后续重试。引用和附录尾部会在可靠识别后移除。", "Stream reasoning and answers; timed-out papers remain queued for later retry. Reliably identified references and appendix tails are removed.")}</p><div class="form-grid two">${field({ label: localeText("首个有效片段等待（秒）", "First progress timeout (seconds)"), key: "llm_analysis_first_token_timeout_seconds", type: "number", min: 1, max: 3600, fallback: 180 })}${field({ label: localeText("连续无进展上限（秒）", "Idle timeout (seconds)"), key: "llm_analysis_idle_timeout_seconds", type: "number", min: 1, max: 3600, fallback: 120 })}${field({ label: localeText("单次总耗时上限（秒）", "Total request timeout (seconds)"), key: "llm_analysis_total_timeout_seconds", type: "number", min: 1, max: 7200, fallback: 1200 })}${field({ label: localeText("保守输入 Token 预算", "Conservative input token budget"), key: "llm_analysis_input_token_budget", type: "number", min: 1024, max: 1000000, fallback: 196608, help: localeText("按 UTF-8 字节保守估算正文与提示词；为模型推理和回答留出空间，超限不会静默截断。", "Conservatively estimate body and instructions using UTF-8 bytes. Reserve model space for reasoning and output; oversized input is never silently truncated.") })}</div>`, { icon: "📖" });
   const persistenceMeta = state.settings?.persistence || {};
   const persistenceSize = persistenceMeta.exists
     ? formatBytes(persistenceMeta.size_bytes)
@@ -3653,7 +3715,7 @@ function renderAdvanced() {
   const featureToggles = section("功能开关", `${field({ label: "Token 用量追踪", key: "token_tracking_enabled", type: "checkbox", fallback: true })}${field({ label: "检查新版本并通知", key: "auto_update_enabled", type: "checkbox", fallback: true, help: "只检查 GitHub Release，不会自动拉取代码、重建镜像或重启容器。发现比当前版本更新的发布版时，经已启用的通知渠道提醒；若所有渠道未送达，后续检查会重试。" })}`, { icon: "📊" });
   const keywordTracker = section("关键词趋势追踪", `<div class="advanced-settings-stack">${field({ label: "启用关键词追踪", key: "keyword_tracker_enabled", type: "checkbox", fallback: true })}<div id="keyword-tracker-dependent" class="advanced-settings-stack" ${tracker ? "" : "hidden"}>${field({ label: "AI 归一化", key: "keyword_normalization_enabled", type: "checkbox", fallback: true })}<div id="keyword-normalization-dependent" class="trend-dependent-fields advanced-settings-stack" ${normalizationEnabled ? "" : "hidden"}><div class="form-grid two">${field({ label: "归一化批次大小", key: "keyword_normalization_batch_size", type: "number", min: 5, max: 100, fallback: 25 })}${field({ label: "归一化使用的 LLM", key: "keyword_normalization_llm_role", type: "select", choices: [{ value: "cheap", label: "低成本 LLM" }, { value: "smart", label: "高性能 LLM" }], fallback: "cheap", help: "该选择会用于每日关键词标准化，并同步记录到 LLM 健康统计。" })}</div></div>${keywordTrendDefaultDaysFields()}<div class="form-grid two">${field({ label: "柱状图 Top-N", key: "keyword_chart_top_n", type: "number", min: 5, max: 50, fallback: 15 })}${field({ label: "趋势图 Top-N", key: "keyword_trend_top_n", type: "number", min: 3, max: 20, fallback: 5 })}</div>${field({ label: "启用趋势报告", key: "keyword_report_enabled", type: "checkbox", fallback: true })}<div id="keyword-report-frequency" ${keywordReportEnabled ? "" : "hidden"}>${field({ label: "报告频率", key: "keyword_report_frequency", type: "select", choices: ["daily", "weekly", "monthly", "always"], fallback: "weekly" })}</div></div></div>`, { icon: "🧩", className: "advanced-settings-card" });
   const retryAndLogs = section("重试与日志", `<div class="form-grid three">${field({ label: "最大重试次数", key: "retry_max_attempts", type: "number", min: 1, max: 10, fallback: 3 })}${field({ label: "最短等待（秒）", key: "retry_min_wait", type: "number", min: 1, max: 60, fallback: 2 })}${field({ label: "最长等待（秒）", key: "retry_max_wait", type: "number", min: 5, max: 300, fallback: 30 })}</div>${field({ label: "运行锁超龄告警阈值（小时）", key: "run_lock_max_age_hours", type: "number", min: 1, max: 168, fallback: 12, help: "同一任务超过该时长时，后续同类任务会告警并跳过；不会按 PID 自动终止进程。" })}<div class="form-grid two">${field({ label: "日志轮转方式", key: "log_rotation_type", type: "select", choices: [{ value: "time", label: "time" }, { value: "size", label: "size" }], fallback: "time" })}${field({ label: "日志保留天数", key: "log_keep_days", type: "number", min: 1, max: 365, fallback: 30 })}</div>`, { icon: "♻️" });
-  return [pdfParser, concurrency, requestPool, persistence, featureToggles, keywordTracker, retryAndLogs, renderProxySettings()].join(divider());
+  return [pdfParser, concurrency, requestPool, analysisBounds, persistence, featureToggles, keywordTracker, retryAndLogs, renderProxySettings()].join(divider());
 }
 
 function bindAdvancedInteractions(root) {

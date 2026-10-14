@@ -9,6 +9,7 @@ const path = require("node:path");
 const { chromium } = require("playwright");
 
 const staticRoot = path.resolve(__dirname, "../src/modern_webui/static");
+const screenshotRoot = process.env.ADR_SCREENSHOT_OUTPUT_DIR || path.resolve(__dirname, "../assets");
 const reports = [
   { id: "r1", name: "ARXIV_Report_2026-09-25_08-00-00.html", label: "2026-09-25 · 08:00", source: "arxiv", source_label: "arXiv", type: "daily", date: "2026-09-25", modified_at: "2026-09-25T08:00:00", size_bytes: 300 },
   { id: "r2", name: "ARXIV_Report_2026-09-24_08-00-00.html", label: "2026-09-24 · 08:00", source: "arxiv", source_label: "arXiv", type: "daily", date: "2026-09-24", modified_at: "2026-09-24T08:00:00", size_bytes: 300 },
@@ -45,15 +46,28 @@ async function main() {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     const pageErrors = [];
     const paperRequests = [];
+    let savedConfiguration = {};
     let dismissed = false;
-    const fixturePaper = { entity_id: "p1", paper_id: "p1", source: "arxiv", sources: ["arxiv"], title: "Demo inference optimization", screening_prompt_version: "1.8", screening_origin: "frozen_review", total_score: null, is_qualified: true, authors: [], variants: [] };
+    const fixtureAnalysis = {
+      chinese_title: "演示论文：共享缓存与推理调度优化",
+      full_text_tldr: "这是用于界面验证的虚构论文。多请求推理面临重复缓存占用和调度等待。演示方案通过复用公共前缀并按资源需求调度，减少重复工作。报告用四部分解释问题、观察、设计与结果。",
+      summary: "多请求推理中的缓存重复占用会挤压并发空间，排队等待也会影响响应速度。本文演示如何围绕这些瓶颈组织阅读报告。",
+      innovations: "1. **重复内容占用缓存。** 多个请求可能使用相同的输入前缀，分别存储会造成额外占用。这个观察推动了缓存复用设计。\n\n2. **请求资源需求不同。** 固定调度顺序难以兼顾响应速度与资源利用，需要根据实际需求安排执行。",
+      methodology: "1. **复用公共前缀。** 将重复内容对应的缓存统一管理，减少重复存储，为更多请求留出空间。\n\n2. **按资源需求调度。** 根据请求状态安排执行顺序，缓解排队等待。这些机制对应前述两个问题。",
+      key_results: "演示评测围绕缓存占用与响应速度展开，结果说明系统设计如何缓解前述瓶颈。此处不提供虚构的性能数字。",
+      __meta: { content_source: "pdf", private_marker: "not-for-display" },
+    };
+    const fixturePaper = { entity_id: "p1", paper_id: "p1", source: "arxiv", sources: ["arxiv"], title: "Demo inference optimization", screening_prompt_version: "1.8", screening_origin: "frozen_review", total_score: null, is_qualified: true, authors: [], variants: [{ source: "arxiv", analysis_status: "succeeded", analysis: fixtureAnalysis }] };
     page.on("pageerror", (error) => pageErrors.push(error.message));
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
       const endpoint = url.pathname;
       let payload;
       if (endpoint === "/api/auth/status") payload = { enabled: false, authenticated: true, configured: false, username: "smoke" };
-      else if (endpoint === "/api/settings") payload = { config: {}, env: {}, secrets: {}, builtin_sources: [], current_version: "4.7" };
+      else if (endpoint === "/api/settings") {
+        if (route.request().method() === "PUT") savedConfiguration = route.request().postDataJSON().config;
+        payload = { config: savedConfiguration, env: {}, secrets: {}, builtin_sources: [], current_version: "4.7" };
+      }
       else if (endpoint === "/api/version") payload = { current_version: "4.7", latest_version: "4.7", update_available: false, checked: false };
       else if (endpoint === "/api/i18n") payload = { items: {} };
       else if (endpoint === "/api/papers") {
@@ -90,17 +104,29 @@ async function main() {
     const windowQuery = new URLSearchParams(paperRequests.at(-1));
     assert.equal(windowQuery.get("qualified_only"), "true");
     assert(windowQuery.get("completed_from"));
-    await page.locator(".paper-card summary").click();
-    await page.screenshot({ path: path.resolve(__dirname, "../assets/webui_paper_window_zh.png"), fullPage: true });
+    await page.locator(".paper-card > summary").click();
+    assert.equal(await page.locator(".analysis-section").count(), 5);
+    assert.equal(await page.locator(".analysis-section ol").count(), 2);
+    assert.match(await page.locator(".analysis-section strong").first().textContent(), /重复内容/);
+    assert.equal(await page.locator(".paper-analysis pre").count(), 0);
+    assert(!(await page.locator(".analysis-report").textContent()).includes("not-for-display"));
+    assert(!(await page.locator(".paper-content").textContent()).includes("不代表已完成 PDF"));
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2));
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: path.join(screenshotRoot, "webui_paper_report_zh.png"), fullPage: true });
+    await page.screenshot({ path: path.join(screenshotRoot, "webui_paper_window_zh.png"), fullPage: true });
     await page.locator('[data-paper-preference="dislike"]').click();
     await page.locator(".paper-card").waitFor({ state: "detached" });
     await page.goto(`${base}/#content/favorites`);
     await page.locator("[data-trash-restore]").waitFor();
-    await page.screenshot({ path: path.resolve(__dirname, "../assets/webui_paper_trash_zh.png"), fullPage: true });
+    await page.screenshot({ path: path.join(screenshotRoot, "webui_paper_trash_zh.png"), fullPage: true });
     await page.locator("#language-button").click();
     await page.locator("[data-trash-restore]").waitFor();
-    await page.screenshot({ path: path.resolve(__dirname, "../assets/webui_paper_trash_en.png"), fullPage: true });
+    await page.screenshot({ path: path.join(screenshotRoot, "webui_paper_trash_en.png"), fullPage: true });
     await page.locator("#theme-button").click();
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.setViewportSize({ width: 390, height: 844 });
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2));
     assert.match(await page.locator("#trash-papers").textContent(), /Trash/);
@@ -109,11 +135,39 @@ async function main() {
     await page.goto(`${base}/#content/paper_search`);
     await page.locator(".paper-card").waitFor();
     assert.equal(await page.locator(".paper-card").count(), 1);
+    await page.locator(".paper-card > summary").click();
+    assert.equal(await page.locator(".analysis-section").count(), 5);
+    assert.match(await page.locator(".analysis-section h5").nth(2).textContent(), /Observations/);
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2));
     await page.setViewportSize({ width: 1280, height: 900 });
 
     await page.locator("#theme-button").click();
-    await page.screenshot({ path: path.resolve(__dirname, "../assets/webui_paper_window_en.png"), fullPage: true });
+    await page.screenshot({ path: path.join(screenshotRoot, "webui_paper_report_en.png"), fullPage: true });
+    await page.screenshot({ path: path.join(screenshotRoot, "webui_paper_window_en.png"), fullPage: true });
+    // Provider prose is inert, legacy arrays/custom fields remain readable,
+    // and abstract fallback must not expose a purported full-text TL;DR.
+    await page.locator(".paper-variant").evaluate(node => { node.innerHTML = paperAnalysisMarkup({
+      summary: '<img src=x onerror="window.reportInjection=true">',
+      innovations: ["Legacy point one", "Legacy point two"], custom_field: "Other stored analysis",
+      full_text_tldr: "Must not show", __meta: { content_source: "abstract_fallback" }
+    }); });
+    assert.equal(await page.locator(".analysis-report img").count(), 0);
+    assert.equal(await page.locator(".analysis-report li").count(), 2);
+    assert.match(await page.locator(".analysis-report").textContent(), /Other stored analysis/);
+    assert(!(await page.locator(".analysis-report").textContent()).includes("Must not show"));
+    assert.equal(await page.evaluate(() => window.reportInjection), undefined);
+
+    await page.goto(`${base}/#configuration/advanced`);
+    const idleField = page.locator('[data-field="llm_analysis_idle_timeout_seconds"]');
+    await idleField.waitFor();
+    await idleField.fill("45");
+    assert(await page.locator("#save-button").evaluate(node => node.classList.contains("has-unsaved")));
+    await page.locator("#save-button").click();
+    await page.waitForFunction(() => !document.querySelector("#save-button").classList.contains("has-unsaved"));
+    assert.equal(savedConfiguration.llm_analysis_idle_timeout_seconds, 45);
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2));
+    await page.setViewportSize({ width: 1280, height: 900 });
 
     await page.goto(`${base}/#content/reports`);
     await page.locator('[data-scroll-select="daily:arxiv"]').waitFor();
