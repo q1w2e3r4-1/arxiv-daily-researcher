@@ -2854,10 +2854,94 @@ function paperCard(item) {
   return `<details class="paper-card"><summary><span class="score-pill">${score}</span><strong>${badge} ${escapeHtml(item.title)}${preference}</strong><small>${escapeHtml(metadata)}</small></summary><div class="paper-content">${item.screening_origin === "frozen_review" && !hasPdfAnalysis ? `<p class="hint-text">${localeText("这是标题/摘要复评结果，不代表已完成 PDF 全文分析。", "This is a title/abstract review; it does not imply completed full-text PDF analysis.")}</p>` : ""}<div class="action-row"><button class="secondary-button compact-button" data-paper-preference="like">${localeText(item.preference === "like" ? "取消收藏" : "👍 收藏", item.preference === "like" ? "Unfavorite" : "👍 Favorite")}</button><button class="secondary-button compact-button" data-paper-preference="dislike">${localeText("👎 不感兴趣", "👎 Not interested")}</button></div>${item.authors?.length ? `<p><strong>作者：</strong>${escapeHtml(item.authors.slice(0, 12).join(", "))}</p>` : ""}${tldr ? `<p class="paper-tldr" translate="no"><strong>TL;DR：</strong>${escapeHtml(tldr)}</p>` : ""}${(item.merged_keywords || item.extracted_keywords)?.length ? `<p><strong>合并关键词：</strong>${escapeHtml((item.merged_keywords || item.extracted_keywords).join(" · "))}</p>` : ""}${item.categories?.length ? `<p class="muted">${escapeHtml(localeText("分类：", "Categories: "))}${escapeHtml(item.categories.join(" "))}</p>` : ""}${url || pdfUrl ? `<p>${url ? `<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">arXiv / 论文页面</a>` : ""}${url && pdfUrl ? " ｜ " : ""}${pdfUrl ? `<a href="${escapeAttribute(pdfUrl)}" target="_blank" rel="noopener noreferrer">PDF</a>` : ""}</p>` : ""}${variants ? `<div class="paper-variants"><h3>来源变体</h3>${variants}</div>` : ""}</div></details>`;
 }
 
+function paperExportState() {
+  return state.pageData.paperExport ||= { ids: [], busy: false, message: "", error: false };
+}
+
+function refreshPaperExport() {
+  const selection = paperExportState();
+  const count = $("#paper-export-count");
+  if (count) count.textContent = localeText(`已选 ${selection.ids.length} / 100 篇（可跨页勾选）`, `${selection.ids.length} / 100 selected (across pages)`);
+  const exportButton = $("#paper-export-download");
+  if (exportButton) {
+    exportButton.disabled = selection.busy || !selection.ids.length;
+    exportButton.textContent = localeText(selection.busy ? "正在生成 PDF…" : "导出所选 PDF", selection.busy ? "Preparing PDF…" : "Export selected PDF");
+  }
+  for (const id of ["paper-export-page", "paper-export-clear"]) {
+    const button = $(`#${id}`);
+    if (button) button.disabled = selection.busy;
+  }
+  document.querySelectorAll("[data-paper-export-id]").forEach(input => {
+    input.checked = selection.ids.includes(input.dataset.paperExportId);
+    input.disabled = selection.busy;
+  });
+  const status = $("#paper-export-status");
+  if (status) {
+    status.textContent = selection.message;
+    status.className = selection.error ? "error-message" : "hint-text";
+  }
+}
+
+async function exportSelectedPapers() {
+  const selection = paperExportState();
+  if (selection.busy || !selection.ids.length) return;
+  selection.busy = true;
+  selection.error = false;
+  selection.message = localeText("正在读取已保存的报告并排版，请稍候…", "Reading saved reports and preparing the PDF…");
+  refreshPaperExport();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120000);
+  try {
+    const response = await fetch("/api/papers/export", {
+      method: "POST", credentials: "same-origin", signal: controller.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entity_ids: [...selection.ids] }),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(localizedString(error.detail || localeText("导出失败，请稍后重试。", "Export failed. Please retry.")));
+    }
+    if (!(response.headers.get("Content-Type") || "").includes("application/pdf")) {
+      throw new Error(localeText("服务未返回 PDF，请检查登录状态后重试。", "No PDF returned. Check your session and retry."));
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "paper-reading-reports.pdf";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    selection.message = localeText("PDF 已生成并开始下载，阅读报告已全部展开。", "PDF download started with all reading reports expanded.");
+  } catch (error) {
+    selection.error = true;
+    selection.message = isAbortError(error)
+      ? localeText("导出等待超时，请减少选择数量后重试。", "Export timed out. Select fewer papers and retry.") : error.message;
+  } finally {
+    clearTimeout(timeout);
+    selection.busy = false;
+    refreshPaperExport();
+  }
+}
+
 async function renderPaperSearch(token) {
   const root = $("#page-root");
   const values = state.pageData.search || { query: "", source: "", completed_from: "", completed_to: "", min_score: "", liked_only: false, qualified_only: true, page: 0, size: 20 };
-  root.innerHTML = `${pageHeader()}${section("检索条件", `<div class="form-grid two"><label class="form-field"><span>关键词</span><input id="search-query" value="${escapeAttribute(values.query)}" placeholder="标题、摘要、TL;DR 或关键词" /></label><label class="form-field"><span>来源</span><select id="search-source"><option value="">全部来源</option></select></label><label class="form-field"><span>完成日期开始</span><input id="search-from" type="date" value="${escapeAttribute(values.completed_from)}" /></label><label class="form-field"><span>完成日期结束</span><input id="search-to" type="date" value="${escapeAttribute(values.completed_to)}" /></label><label class="form-field"><span>最低分数</span><input id="search-score" type="number" step="0.5" value="${escapeAttribute(values.min_score)}" /></label><label class="toggle-field"><span>仅收藏论文</span><input id="search-liked" type="checkbox" ${values.liked_only ? "checked" : ""}/><i></i></label></div><label class="toggle-field"><span>${localeText("仅入选论文", "Qualified papers only")}</span><input id="search-qualified" type="checkbox" ${values.qualified_only !== false ? "checked" : ""}/><i></i></label><p class="hint-text">${localeText("按本地处理完成日期筛选（含复评），合并来源并去重；默认隐藏不感兴趣论文，按完成时间倒序排列。", "Filter by local processing completion date, including reviews; merge sources and deduplicate. Dismissed papers are hidden; newest completed first.")}</p><div class="action-row">${[7,14,30].map(days => `<button class="secondary-button" data-search-days="${days}">${localeText(`最近 ${days} 天`, `Last ${days} days`)}</button>`).join("")}<button id="search-run" class="primary-button">搜索</button></div>`, { icon: "🔍" })}<div id="search-results"></div>`;
+  root.innerHTML = `${pageHeader()}${section("检索条件", `<div class="form-grid two"><label class="form-field"><span>关键词</span><input id="search-query" value="${escapeAttribute(values.query)}" placeholder="标题、摘要、TL;DR 或关键词" /></label><label class="form-field"><span>来源</span><select id="search-source"><option value="">全部来源</option></select></label><label class="form-field"><span>完成日期开始</span><input id="search-from" type="date" value="${escapeAttribute(values.completed_from)}" /></label><label class="form-field"><span>完成日期结束</span><input id="search-to" type="date" value="${escapeAttribute(values.completed_to)}" /></label><label class="form-field"><span>最低分数</span><input id="search-score" type="number" step="0.5" value="${escapeAttribute(values.min_score)}" /></label><label class="toggle-field"><span>仅收藏论文</span><input id="search-liked" type="checkbox" ${values.liked_only ? "checked" : ""}/><i></i></label></div><label class="toggle-field"><span>${localeText("仅入选论文", "Qualified papers only")}</span><input id="search-qualified" type="checkbox" ${values.qualified_only !== false ? "checked" : ""}/><i></i></label><p class="hint-text">${localeText("按本地处理完成日期筛选（含复评），合并来源并去重；默认隐藏不感兴趣论文，按完成时间倒序排列。", "Filter by local processing completion date, including reviews; merge sources and deduplicate. Dismissed papers are hidden; newest completed first.")}</p><div class="action-row">${[7,14,30].map(days => `<button class="secondary-button" data-search-days="${days}">${localeText(`最近 ${days} 天`, `Last ${days} days`)}</button>`).join("")}<button id="search-run" class="primary-button">搜索</button></div>`, { icon: "🔍" })}${section(localeText("批量阅读报告", "Batch reading reports"), `<div class="action-row"><span id="paper-export-count"></span><button id="paper-export-page" class="secondary-button">${localeText("勾选本页", "Select this page")}</button><button id="paper-export-clear" class="secondary-button">${localeText("清空选择", "Clear selection")}</button><button id="paper-export-download" class="primary-button">${localeText("导出所选 PDF", "Export selected PDF")}</button></div><p class="hint-text">${localeText("按勾选顺序导出，所有来源的阅读报告全部展开；没有报告的论文会注明缺失。不会重新调用模型。", "Export in selection order with all source reports expanded. Missing reports are labelled; no model calls are made.")}</p><p id="paper-export-status" role="status" aria-live="polite"></p>`)}<div id="search-results"></div>`;
+  $("#paper-export-download").addEventListener("click", exportSelectedPapers);
+  $("#paper-export-clear").addEventListener("click", () => {
+    paperExportState().ids = [];
+    refreshPaperExport();
+  });
+  $("#paper-export-page").addEventListener("click", () => {
+    const selection = paperExportState();
+    for (const input of root.querySelectorAll("[data-paper-export-id]")) {
+      if (!selection.ids.includes(input.dataset.paperExportId) && selection.ids.length < 100) selection.ids.push(input.dataset.paperExportId);
+    }
+    refreshPaperExport();
+  });
+  refreshPaperExport();
   const sourceSelect = $("#search-source");
   decorateNativeSelects(root);
   try {
@@ -2907,8 +2991,18 @@ async function loadSearchResults(token) {
     if (values.page >= pages) { values.page = pages - 1; return loadSearchResults(token); }
     const pager = pages > 1 ? `<div class="pager"><span>${state.language === "en" ? `Page ${values.page + 1} / ${pages} · 20 papers per page` : `第 ${values.page + 1} / ${pages} 页 · 每页 20 篇`}</span><button id="search-prev" class="secondary-button compact-button" ${values.page === 0 ? "disabled" : ""}>${localeText("上一页", "Previous")}</button><button id="search-next" class="secondary-button compact-button" ${values.page >= pages - 1 ? "disabled" : ""}>${localeText("下一页", "Next")}</button></div>` : "";
     const resultTitle = localeText(`检索结果（共 ${result.total} 篇匹配）`, `Search results (${result.total} matches)`);
-    target.innerHTML = section(resultTitle, `${result.items?.length ? result.items.map(paperCard).join("") : '<p class="empty-state">没有匹配的论文。</p>'}${pager}`);
+    target.innerHTML = section(resultTitle, `${result.items?.length ? result.items.map(item => `<div class="paper-selectable"><label class="paper-export-choice"><input type="checkbox" data-paper-export-id="${escapeAttribute(item.entity_id)}" />${localeText("选择导出", "Select for export")}</label>${paperCard(item)}</div>`).join("") : '<p class="empty-state">没有匹配的论文。</p>'}${pager}`);
     applyLocale(target);
+    target.querySelectorAll("[data-paper-export-id]").forEach(input => input.addEventListener("change", () => {
+      const selection = paperExportState();
+      const id = input.dataset.paperExportId;
+      if (input.checked && !selection.ids.includes(id)) {
+        if (selection.ids.length >= 100) toast(localeText("单次最多导出 100 篇。", "Export up to 100 papers per batch."), "error");
+        else selection.ids.push(id);
+      } else if (!input.checked) selection.ids = selection.ids.filter(key => key !== id);
+      refreshPaperExport();
+    }));
+    refreshPaperExport();
     target.querySelectorAll(".paper-card").forEach((card, index) => {
       const item = result.items[index];
       card.querySelectorAll("[data-paper-preference]").forEach(button => button.addEventListener("click", async () => {

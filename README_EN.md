@@ -244,6 +244,8 @@ In **Paper Search**, choose **Last 7 / 14 / 30 days** or set a completion date r
 
 Expand a paper to see one Chinese TL;DR on the outer card, preferring a saved PDF summary. Source variants contain the reading report body: background and problem, observations and challenges, approach and design, and results and conclusion. Numbered lists and bold text are supported; empty sections are omitted and additional legacy fields remain readable. Abstract-based analyses are labelled and do not display a full-text TL;DR.
 
+In **Paper Search**, select papers and choose **Export selected PDF** to combine saved reading reports into one PDF. Selection persists across pages, with up to 100 papers per batch in selection order. Each paper has one TL;DR and all source report bodies are expanded. Missing reports and abstract-based analyses are labelled; export does not call a model. Use **Select this page** or **Clear selection** to manage the batch.
+
 Deep analysis extracts every PDF page and removes reliably identified reference and appendix tails. Ambiguous sections are retained. Streaming requests have separate first-progress, idle, and total time limits. Reasoning fragments count as progress; connection keepalives do not. Papers with timeouts or broken streams stay queued for a later retry rather than being classified as irrelevant. Adjust time limits and the input budget in **Configuration → Advanced**. Input is conservatively estimated using UTF-8 bytes; reserve space for reasoning and output in your chosen model. Oversized input produces an explicit error instead of silent truncation.
 
 <table>

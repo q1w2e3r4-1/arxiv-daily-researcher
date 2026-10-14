@@ -1,6 +1,6 @@
 # Standalone dependencies for the modern WebUI.
-# Keep this list separate from the worker's PDF/LLM stack: the ASGI server
-# and static frontend do not need pandas, pyarrow, NumPy, or Streamlit.
+# Keep this list separate from the worker stack. PDF export uses PyMuPDF;
+# the WebUI does not need pandas, pyarrow, NumPy, or Streamlit.
 json5==0.13.0
 requests==2.32.5
 webdavclient3>=3.14.0
@@ -9,3 +9,6 @@ openai==2.15.0
 starlette==1.6.0
 uvicorn==0.52.4
 itsdangerous==2.2.0
+
+# Render selected saved reading reports as a Chinese PDF.
+PyMuPDF==1.26.7

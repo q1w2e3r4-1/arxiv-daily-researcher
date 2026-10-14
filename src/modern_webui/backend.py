@@ -25,7 +25,7 @@ import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePath
-from threading import RLock
+from threading import Lock, RLock
 from typing import Any, Iterable, Mapping
 
 from utils.backup import (
@@ -1591,6 +1591,32 @@ def paper_search(filters: Mapping[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError) as exc:
         raise ModernWebUIError(f"检索失败：{exc}") from exc
     return {"available": True, "sources": _source_list(store), **result}
+
+
+_PAPER_EXPORT_LOCK = Lock()
+
+
+def export_paper_reports(entity_ids: Any) -> bytes:
+    """Generate a bounded PDF from authoritative saved reports; never call LLMs."""
+    if not isinstance(entity_ids, list) or not 1 <= len(entity_ids) <= 100:
+        raise ModernWebUIError("请选择 1–100 篇论文导出。")
+    if any(not isinstance(key, str) or not key.strip() or len(key) > 200 for key in entity_ids):
+        raise ModernWebUIError("论文标识无效。")
+    if len(set(entity_ids)) != len(entity_ids):
+        raise ModernWebUIError("请勿重复选择同一篇论文。")
+    if not _PAPER_EXPORT_LOCK.acquire(blocking=False):
+        raise ModernWebUIError("已有报告正在导出，请稍后重试。")
+    try:
+        store = open_store()
+        if store is None:
+            raise ModernWebUIError("论文数据库尚未创建。")
+        from modern_webui.paper_export import render_pdf
+        try:
+            return render_pdf(store.get_selected_paper_entities(entity_ids))
+        except ValueError as exc:
+            raise ModernWebUIError(str(exc)) from exc
+    finally:
+        _PAPER_EXPORT_LOCK.release()
 
 
 def preferences_summary() -> dict[str, Any]:

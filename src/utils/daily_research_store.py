@@ -4607,6 +4607,21 @@ class DailyResearchStore:
         with self._connect() as conn:
             return self._entity_variants_with_conn(conn, str(entity_id))
 
+    def get_selected_paper_entities(self, entity_ids: list[str]) -> list[Dict[str, Any]]:
+        """Read selected logical papers in caller order from one SQLite snapshot."""
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            items = []
+            for entity_id in entity_ids:
+                row = conn.execute(
+                    "SELECT * FROM paper_entities WHERE entity_id = ?", (entity_id,)
+                ).fetchone()
+                if row is None:
+                    raise ValueError("选中的论文已不存在，请刷新列表后重试。")
+                variants = self._entity_variants_with_conn(conn, entity_id)
+                items.append(self._entity_search_item(row, variants))
+        return items
+
     def get_paper_entity(
         self, source: str, paper_id: str
     ) -> Optional[Dict[str, Any]]:

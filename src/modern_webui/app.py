@@ -583,6 +583,19 @@ async def papers_get(request: Request) -> JSONResponse:
         raise _safe_error(exc) from exc
 
 
+async def paper_reports_export(request: Request) -> Response:
+    _require_session(request)
+    payload = await _payload(request, limit=32_000)
+    try:
+        content = await _blocking_call(backend.export_paper_reports, payload.get("entity_ids"))
+    except Exception as exc:
+        raise _safe_error(exc) from exc
+    return Response(content, media_type="application/pdf", headers={
+        "Content-Disposition": 'attachment; filename="paper-reading-reports.pdf"',
+        "Cache-Control": "no-store",
+    })
+
+
 async def favorites_get(request: Request) -> JSONResponse:
     _require_session(request)
     try:
@@ -1055,6 +1068,7 @@ app = Starlette(
         Route("/api/history/{request_id:str}/retry", history_retry, methods=["POST"]),
         Route("/api/history/supplement-reports/migrate", migrate_supplement_reports, methods=["POST"]),
         Route("/api/papers", papers_get, methods=["GET"]),
+        Route("/api/papers/export", paper_reports_export, methods=["POST"]),
         Route("/api/favorites", favorites_get, methods=["GET"]),
         Route("/api/trash", trash_get, methods=["GET"]),
         Route("/api/favorites/collect", favorites_collect, methods=["POST"]),

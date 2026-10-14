@@ -1755,4 +1755,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "zh": "权重 = 收藏(+1)/不喜欢(-1)/v1 及格(+0.25) 信号之和；评分时按限幅与衰减生效。",
         "en": "Weight = sum of like(+1)/dislike(-1)/v1-pass(+0.25) signals; applied with the cap and dampening at scoring time.",
     },
+    "paper_export_selection_limit": {"zh": "请选择 1–100 篇论文导出。", "en": "Select 1–100 papers to export."},
+    "paper_export_invalid_id": {"zh": "论文标识无效。", "en": "Invalid paper identifier."},
+    "paper_export_duplicate": {"zh": "请勿重复选择同一篇论文。", "en": "Select each paper only once."},
+    "paper_export_busy": {"zh": "已有报告正在导出，请稍后重试。", "en": "A report export is already running. Please retry shortly."},
+    "paper_export_no_database": {"zh": "论文数据库尚未创建。", "en": "The paper database has not been created yet."},
+    "paper_export_missing_paper": {"zh": "选中的论文已不存在，请刷新列表后重试。", "en": "A selected paper no longer exists. Refresh the list and retry."},
+    "paper_export_size_limit": {"zh": "报告内容过大，请减少本次导出的论文数。", "en": "Report content is too large. Export fewer papers."},
+    "paper_export_page_limit": {"zh": "报告页数过多，请减少本次导出的论文数。", "en": "Too many report pages. Export fewer papers."},
 }

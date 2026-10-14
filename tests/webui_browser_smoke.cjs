@@ -58,6 +58,8 @@ async function main() {
       __meta: { content_source: "pdf", private_marker: "not-for-display" },
     };
     const fixturePaper = { entity_id: "p1", paper_id: "p1", source: "arxiv", sources: ["arxiv"], title: "Demo inference optimization", screening_prompt_version: "1.8", screening_origin: "frozen_review", total_score: null, is_qualified: true, authors: [], tldr: "Legacy scoring TLDR", variants: [{ source: "arxiv", tldr: "Legacy variant TLDR", analysis_status: "succeeded", analysis: fixtureAnalysis }] };
+    let exportFails = false, paginated = false;
+    const exportRequests = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
@@ -70,10 +72,16 @@ async function main() {
       }
       else if (endpoint === "/api/version") payload = { current_version: "4.7", latest_version: "4.7", update_available: false, checked: false };
       else if (endpoint === "/api/i18n") payload = { items: {} };
+      else if (endpoint === "/api/papers/export") {
+        exportRequests.push(route.request().postDataJSON());
+        if (exportFails) return route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ detail: "Synthetic export failure" }) });
+        return route.fulfill({ status: 200, contentType: "application/pdf", headers: { "content-disposition": 'attachment; filename="paper-reading-reports.pdf"' }, body: "%PDF-1.7\nSynthetic download fixture" });
+      }
       else if (endpoint === "/api/papers") {
         paperRequests.push(url.searchParams.toString());
         payload = { available: true, sources: ["arxiv"], total: !dismissed && (url.searchParams.has("query") || url.searchParams.has("min_score")) ? 1 : 0,
           items: !dismissed && (url.searchParams.has("query") || url.searchParams.has("min_score")) ? [fixturePaper] : [] };
+        if (paginated) payload = {available: true, sources: ["arxiv"], total: 21, items: [Number(url.searchParams.get("offset")) ? {...fixturePaper, entity_id: "p2", paper_id: "p2", title: "Second page paper"} : fixturePaper]};
       } else if (endpoint === "/api/preferences") {
         const body = route.request().postDataJSON();
         dismissed = body.preference === "dislike";
@@ -148,6 +156,35 @@ async function main() {
     await page.locator("#theme-button").click();
     await page.screenshot({ path: path.join(screenshotRoot, "webui_paper_report_en.png"), fullPage: true });
     await page.screenshot({ path: path.join(screenshotRoot, "webui_paper_window_en.png"), fullPage: true });
+    // Selection remains across pages; failures preserve it for a retry.
+    paginated = true;
+    await page.locator("#search-run").click();
+    await page.locator("#search-next").waitFor();
+    await page.locator('[data-paper-export-id="p1"]').check();
+    await page.locator("#search-next").click();
+    await page.locator('[data-paper-export-id="p2"]').waitFor();
+    await page.locator("#paper-export-page").click();
+    assert.match(await page.locator("#paper-export-count").textContent(), /2 \/ 100/);
+    await page.locator("#search-prev").click();
+    await page.locator('[data-paper-export-id="p1"]').waitFor();
+    assert(await page.locator('[data-paper-export-id="p1"]').isChecked());
+    exportFails = true;
+    await page.locator("#paper-export-download").click();
+    await page.locator("#paper-export-status.error-message").waitFor();
+    assert.match(await page.locator("#paper-export-status").textContent(), /Synthetic export failure/);
+    assert.deepEqual(exportRequests.at(-1).entity_ids, ["p1", "p2"]);
+    exportFails = false;
+    const downloadPromise = page.waitForEvent("download");
+    await page.locator("#paper-export-download").click();
+    const download = await downloadPromise;
+    assert.equal(download.suggestedFilename(), "paper-reading-reports.pdf");
+    assert.equal(await download.failure(), null);
+    await page.locator("#paper-export-clear").click();
+    assert(await page.locator("#paper-export-download").isDisabled());
+    paginated = false;
+    await page.locator("#search-run").click();
+    await page.locator(".paper-variant").waitFor({state: "attached"});
+
     // Provider prose is inert, legacy arrays/custom fields remain readable,
     // and abstract fallback must not expose a purported full-text TL;DR.
     await page.locator(".paper-variant").evaluate(node => { node.innerHTML = paperAnalysisMarkup({

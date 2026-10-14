@@ -1234,3 +1234,9 @@ select::-ms-expand { display: none; }
   .status-card { padding: 16px; }
   .table-wrap table, .table-wrap .pager { min-width: 500px; }
 }
+
+/* Export selection stays separate from the expandable paper summary. */
+.paper-selectable { margin-bottom: 14px; }
+.paper-export-choice { display: inline-flex; align-items: center; gap: 8px; padding: 8px 2px; cursor: pointer; font-size: .9rem; }
+.paper-export-choice input { width: 18px; height: 18px; }
+#paper-export-count { overflow-wrap: anywhere; }
