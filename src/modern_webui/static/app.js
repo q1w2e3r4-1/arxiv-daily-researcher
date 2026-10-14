@@ -2811,18 +2811,32 @@ function paperAnalysisMarkup(analysis) {
     <p class="muted analysis-provenance">${escapeHtml(provenance)}</p>${sections}</div></details>`;
 }
 
-function sourceVariantCard(variant) {
-  const statuses = [
-    variant.strategy_id ? localeText(`策略：${variant.strategy_id}`, `Strategy: ${variant.strategy_id}`) : "",
-    variant.screening_prompt_version ? localeText(`复评 Prompt：v${variant.screening_prompt_version}`, `Review prompt: v${variant.screening_prompt_version}`) : "",
-    variant.score_status ? localeText(`评分：${variant.score_status}`, `Scoring: ${variant.score_status}`) : "",
-    variant.translation_status ? localeText(`翻译：${variant.translation_status}`, `Translation: ${variant.translation_status}`) : "",
-    variant.analysis_status ? localeText(`分析：${variant.analysis_status}`, `Analysis: ${variant.analysis_status}`) : "",
-  ].filter(Boolean).join(" · ");
-  const url = safeExternalUrl(variant.url);
-  const pdfUrl = safeExternalUrl(variant.pdf_url);
+function sourceVariantCard(variant, showSource = false) {
   const analysis = paperAnalysisMarkup(variant.analysis);
-  return `<article class="paper-variant"><h4>${escapeHtml(variant.source || "—")} · ${escapeHtml(formatTime(variant.completed_at) || localeText("未完成", "Incomplete"))}</h4>${statuses ? `<p class="muted">${escapeHtml(statuses)}</p>` : ""}${variant.abstract_cn ? `<p><strong>中文摘要：</strong>${escapeHtml(variant.abstract_cn)}</p>` : ""}${variant.extracted_keywords?.length ? `<p><strong>关键词：</strong>${escapeHtml(variant.extracted_keywords.join(" · "))}</p>` : ""}${analysis}${variant.last_error ? `<p class="error-message">${escapeHtml(localeText("问题：", "Issue: "))}${escapeHtml(variant.last_error)}</p>` : ""}${url || pdfUrl ? `<p>${url ? `<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">论文页面</a>` : ""}${url && pdfUrl ? " · " : ""}${pdfUrl ? `<a href="${escapeAttribute(pdfUrl)}" target="_blank" rel="noopener noreferrer">PDF</a>` : ""}</p>` : ""}${variant.report_path ? `<p class="muted">${escapeHtml(localeText("报告路径：", "Report path: "))}${escapeHtml(variant.report_path)}</p>` : ""}</article>`;
+  return `<article class="paper-variant${showSource ? "" : " paper-primary-report"}">${showSource ? `<h4>${escapeHtml(variant.source || "—")}</h4>` : ""}${analysis || (variant.abstract_cn ? `<p translate="no">${escapeHtml(variant.abstract_cn)}</p>` : `<p class="hint-text">${localeText("尚无已保存的阅读报告。", "No saved reading report yet.")}</p>`)}${variant.last_error ? `<p class="error-message">${escapeHtml(localeText("问题：", "Issue: "))}${escapeHtml(variant.last_error)}</p>` : ""}</article>`;
+}
+
+function paperReadingReports(item) {
+  const variants = [...(item.variants || [])];
+  // Full-text reading reports are the primary view. Keep older or distinct
+  // source analyses available without repeating the primary report body.
+  const rank = variant => paperAnalysisMarkup(variant.analysis)
+    ? (variant.analysis?.__meta?.content_source === "pdf" ? 2 : 1) : 0;
+  variants.sort((a, b) => rank(b) - rank(a));
+  if (!variants.length) return `<p class="hint-text">${localeText("尚无已保存的阅读报告。", "No saved reading report yet.")}</p>`;
+  const signature = variant => JSON.stringify(Object.entries(variant.analysis || {})
+    .filter(([key]) => !key.startsWith("__") && !["full_text_tldr", "editorial_review"].includes(key))
+    .sort(([a], [b]) => a.localeCompare(b)));
+  const primary = variants[0];
+  const seen = new Set([signature(primary)]);
+  const others = variants.slice(1).filter(variant => {
+    const key = signature(variant);
+    if (seen.has(key) && !variant.last_error) return false;
+    seen.add(key);
+    return true;
+  });
+  return sourceVariantCard(primary) + (others.length
+    ? `<details class="paper-other-reports"><summary>${localeText("其他来源的分析记录", "Analyses from other sources")}</summary>${others.map(variant => sourceVariantCard(variant, true)).join("")}</details>` : "");
 }
 
 function paperTldr(item) {
@@ -2849,9 +2863,9 @@ function paperCard(item) {
     item.screening_prompt_version ? localeText(`复评：v${item.screening_prompt_version}`, `Review: v${item.screening_prompt_version}`) : "",
     item.strategy_id ? localeText(`策略：${item.strategy_id}`, `Strategy: ${item.strategy_id}`) : "",
   ].filter(Boolean).join(" ｜ ");
-  const variants = (item.variants || []).map(sourceVariantCard).join("");
+  const readingReports = paperReadingReports(item);
   const hasPdfAnalysis = (item.variants || []).some(variant => variant.analysis?.__meta?.content_source === "pdf");
-  return `<details class="paper-card"><summary><span class="score-pill">${score}</span><strong>${badge} ${escapeHtml(item.title)}${preference}</strong><small>${escapeHtml(metadata)}</small></summary><div class="paper-content">${item.screening_origin === "frozen_review" && !hasPdfAnalysis ? `<p class="hint-text">${localeText("这是标题/摘要复评结果，不代表已完成 PDF 全文分析。", "This is a title/abstract review; it does not imply completed full-text PDF analysis.")}</p>` : ""}<div class="action-row"><button class="secondary-button compact-button" data-paper-preference="like">${localeText(item.preference === "like" ? "取消收藏" : "👍 收藏", item.preference === "like" ? "Unfavorite" : "👍 Favorite")}</button><button class="secondary-button compact-button" data-paper-preference="dislike">${localeText("👎 不感兴趣", "👎 Not interested")}</button></div>${item.authors?.length ? `<p><strong>作者：</strong>${escapeHtml(item.authors.slice(0, 12).join(", "))}</p>` : ""}${tldr ? `<p class="paper-tldr" translate="no"><strong>TL;DR：</strong>${escapeHtml(tldr)}</p>` : ""}${(item.merged_keywords || item.extracted_keywords)?.length ? `<p><strong>合并关键词：</strong>${escapeHtml((item.merged_keywords || item.extracted_keywords).join(" · "))}</p>` : ""}${item.categories?.length ? `<p class="muted">${escapeHtml(localeText("分类：", "Categories: "))}${escapeHtml(item.categories.join(" "))}</p>` : ""}${url || pdfUrl ? `<p>${url ? `<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">arXiv / 论文页面</a>` : ""}${url && pdfUrl ? " ｜ " : ""}${pdfUrl ? `<a href="${escapeAttribute(pdfUrl)}" target="_blank" rel="noopener noreferrer">PDF</a>` : ""}</p>` : ""}${variants ? `<div class="paper-variants"><h3>来源变体</h3>${variants}</div>` : ""}</div></details>`;
+  return `<details class="paper-card"><summary><span class="score-pill">${score}</span><strong>${badge} ${escapeHtml(item.title)}${preference}</strong><small>${escapeHtml(metadata)}</small></summary><div class="paper-content">${item.screening_origin === "frozen_review" && !hasPdfAnalysis ? `<p class="hint-text">${localeText("这是标题/摘要复评结果，不代表已完成 PDF 全文分析。", "This is a title/abstract review; it does not imply completed full-text PDF analysis.")}</p>` : ""}<div class="action-row"><button class="secondary-button compact-button" data-paper-preference="like">${localeText(item.preference === "like" ? "取消收藏" : "👍 收藏", item.preference === "like" ? "Unfavorite" : "👍 Favorite")}</button><button class="secondary-button compact-button" data-paper-preference="dislike">${localeText("👎 不感兴趣", "👎 Not interested")}</button></div>${item.authors?.length ? `<p><strong>作者：</strong>${escapeHtml(item.authors.slice(0, 12).join(", "))}</p>` : ""}${tldr ? `<p class="paper-tldr" translate="no"><strong>TL;DR：</strong>${escapeHtml(tldr)}</p>` : ""}${(item.merged_keywords || item.extracted_keywords)?.length ? `<p><strong>合并关键词：</strong>${escapeHtml((item.merged_keywords || item.extracted_keywords).join(" · "))}</p>` : ""}${item.categories?.length ? `<p class="muted">${escapeHtml(localeText("分类：", "Categories: "))}${escapeHtml(item.categories.join(" "))}</p>` : ""}${url || pdfUrl ? `<p>${url ? `<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">arXiv / 论文页面</a>` : ""}${url && pdfUrl ? " ｜ " : ""}${pdfUrl ? `<a href="${escapeAttribute(pdfUrl)}" target="_blank" rel="noopener noreferrer">PDF</a>` : ""}</p>` : ""}${readingReports}</div></details>`;
 }
 
 function paperExportState() {

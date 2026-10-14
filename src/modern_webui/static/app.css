@@ -1240,3 +1240,7 @@ select::-ms-expand { display: none; }
 .paper-export-choice { display: inline-flex; align-items: center; gap: 8px; padding: 8px 2px; cursor: pointer; font-size: .9rem; }
 .paper-export-choice input { width: 18px; height: 18px; }
 #paper-export-count { overflow-wrap: anywhere; }
+
+.paper-primary-report { background: transparent; border: 0; padding: 0; }
+.paper-other-reports { margin-top: 16px; }
+.paper-other-reports > summary { cursor: pointer; color: var(--muted); padding: 8px 0; }

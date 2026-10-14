@@ -119,6 +119,26 @@ async function main() {
     assert.equal(await page.locator(".analysis-section ol").count(), 2);
     assert.match(await page.locator(".analysis-section strong").first().textContent(), /重复内容/);
     assert.equal(await page.locator(".paper-analysis pre").count(), 0);
+    assert.equal(await page.locator(".paper-primary-report > h4").count(), 0);
+    assert.equal(await page.locator(".paper-variants").count(), 0);
+    assert(!(await page.locator(".paper-primary-report").textContent()).includes("succeeded"));
+    assert(!(await page.locator(".paper-content").textContent()).includes("来源变体"));
+    const reportViews = await page.evaluate(() => {
+      const holder = document.createElement("div");
+      holder.innerHTML = paperReadingReports({variants: [
+        {source: "old", analysis: {summary: "Legacy body"}},
+        {source: "acm", analysis: {summary: "Preferred PDF body", __meta: {content_source: "pdf"}}},
+        {source: "mirror", analysis: {summary: "Preferred PDF body", __meta: {content_source: "pdf", cache: "different"}}}
+      ]});
+      return {main: holder.querySelector(".paper-primary-report").textContent,
+        count: holder.querySelectorAll(".paper-analysis").length,
+        otherOpen: holder.querySelector(".paper-other-reports").open,
+        other: holder.querySelector(".paper-other-reports").textContent};
+    });
+    assert.match(reportViews.main, /Preferred PDF body/);
+    assert.equal(reportViews.count, 2);
+    assert.equal(reportViews.otherOpen, false);
+    assert.match(reportViews.other, /Legacy body/);
     assert(!(await page.locator(".analysis-report").textContent()).includes("not-for-display"));
     assert(!(await page.locator(".paper-content").textContent()).includes("不代表已完成 PDF"));
     await page.setViewportSize({ width: 390, height: 844 });
